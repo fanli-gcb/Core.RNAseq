@@ -1078,6 +1078,7 @@ if analysis_type == "advanced"
 #		out_fp.puts "\tcufflinks --output-dir #{output_dir}/#{sample_id}.sub_\$pct.cufflinks_output --num-threads #{num_tophat_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_dir}/#{sample_id}.sub_\$pct.tophat_output/accepted_hits.bam"
 		out_fp.puts "\tcuffquant --output-dir #{output_saturation_dir}/cuffquant/#{sample_id}.sub_\$pct -p #{num_tophat_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_saturation_dir}/tophat/#{sample_id}.sub_\$pct/accepted_hits.bam"
 	}
+	out_fp.puts "done"
 	
 	out_fp.puts "", "###\td. Cuffnorm"
 	out_fp.puts "### PLACEHOLDER - insert manual Cuffnorm code here ###"
