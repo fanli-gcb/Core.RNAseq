@@ -14,6 +14,12 @@ if args.output:
 else:
 	fout = sys.stdout
 
+# metadata
+metadata = myDataset.Metadata()
+fout.write("Experiment_Name\t%s\n" % metadata.experiment_name)
+fout.write("Start_Datetime\t%s\n" % metadata.start_datetime)
+fout.write("Chemistry\t%s\n" % metadata.chemistry)
+
 # tile metrics
 tilemetrics = myDataset.TileMetrics()
 fout.write("Mean_Cluster_Density\t%i\n" % tilemetrics.mean_cluster_density)
@@ -27,8 +33,11 @@ for read_num in range(tilemetrics.num_reads):
 	fout.write("Read%i_Aligned\t%f\n" % (read_num+1, tilemetrics.mean_aligned[read_num]))
 # quality metrics
 qualitymetrics = myDataset.QualityMetrics()
+#for key in dir(qualitymetrics):
+#	fout.write("%s\n" % key)
 for read in qualitymetrics.read_config:
 	fout.write("Read%i_Percent_Q30\t%f\n" % (read['read_num'], qualitymetrics.get_qscore_percentage(30, read['read_num']-1)))
+fout.write("Overall_Percent_Q30\t%f\n" % qualitymetrics.get_qscore_percentage(30, -1))
 # error metrics
 try:
 	errormetrics = myDataset.ErrorMetrics()
