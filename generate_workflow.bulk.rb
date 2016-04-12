@@ -53,6 +53,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output_deseq2_dir"
 			output_deseq2_dir = ARGV.shift
 			output_deseq2_dir = output_deseq2_dir.gsub(/\/$/, "")
+		elsif arg == "--output_edger_dir"
+			output_edger_dir = ARGV.shift
+			output_edger_dir = output_edger_dir.gsub(/\/$/, "")
 		elsif arg == "--output_gsea_dir"
 			output_gsea_dir = ARGV.shift
 			output_gsea_dir = output_gsea_dir.gsub(/\/$/, "")
@@ -133,6 +136,7 @@ end
 #		#{output_dir}/GSEA
 #		#{output_dir}/htseq
 #		#{output_dir}/DESeq2
+#		#{output_dir}/edgeR
 if output_tophat_dir.nil?
 	output_tophat_dir = "#{output_dir}/tophat"
 end
@@ -159,6 +163,9 @@ if output_htseq_dir.nil?
 end
 if output_deseq2_dir.nil?
 	output_deseq2_dir = "#{output_dir}/DESeq2"
+end
+if output_edger_dir.nil?
+	output_edger_dir = "#{output_dir}/edgeR"
 end
 if output_kallisto_dir.nil?
 	output_kallisto_dir = "#{output_dir}/kallisto"
@@ -669,7 +676,7 @@ if de_pipeline == "tuxedo"
 	}
 elsif de_pipeline == "htseq"
 	out_fp.puts "","","################################################"
-	out_fp.puts "###\t2. Differential expression analysis using Tophat/HTSeq/DESeq2 pipeline"
+	out_fp.puts "###\t2. Differential expression analysis using Tophat/HTSeq/DESeq2/edgeR pipeline"
 	out_fp.puts "###\ta. Count reads using HTSeq"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
@@ -752,7 +759,9 @@ elsif de_pipeline == "htseq"
 		}
 		header = [condA_samples, condB_samples].join("\t")
 		out_fp.puts "mkdir -p #{output_deseq2_dir}"
+		out_fp.puts "mkdir -p #{output_edger_dir}"
 		out_fp.puts "mkdir -p #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/"
+		out_fp.puts "mkdir -p #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/"
 		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
 		header = [condA_files, condB_files].join(" ")
 		farr = Array.new
@@ -764,6 +773,9 @@ elsif de_pipeline == "htseq"
 		out_fp.puts "paste #{header} | cut -f#{fstr} >> #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
 		header = [Array.new(condA_files.length, condA), Array.new(condB_files.length, condB)].join(",")
 		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
+		
+		out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+		out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
 	}
 	out_fp.puts "#\tOUTPUT:"
 	comparisons.each { |comparison|
@@ -774,7 +786,7 @@ elsif de_pipeline == "htseq"
 		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
 	}
 	
-	out_fp.puts "", "###\tc. Run DESeq2"
+	out_fp.puts "", "###\tc. Run DESeq2/edgeR"
 	out_fp.puts "#\tINPUT:"
 	comparisons.each { |comparison|
 		characteristic = comparison["characteristic"]
@@ -789,6 +801,7 @@ elsif de_pipeline == "htseq"
 		condA = comparison["condition_A"]
 		condB = comparison["condition_B"]
 		out_fp.puts "./run_DESeq2.R #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
+		out_fp.puts "./run_edgeR.R #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
 	}
 	out_fp.puts "#\tOUTPUT:"
 		comparisons.each { |comparison|
