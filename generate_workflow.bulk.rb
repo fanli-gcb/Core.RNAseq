@@ -6,7 +6,8 @@
 flag_transcriptomeOnly = false
 flag_cuffmerge = true
 flag_kallisto = false
-de_pipeline = "htseq" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTseq/DESeq2, "kallisto" for kallisto/DESeq2
+flag_comparison = false
+de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTseq/DESeq2, "kallisto" for kallisto/DESeq2
 read_mismatches = 2
 read_gap_length = 2
 read_edit_dist = 2
@@ -23,6 +24,7 @@ if (ARGV.size >= 6)
 			sample_sheet_fn = ARGV.shift
 		elsif arg == "-c"
 			comparison_sheet_fn = ARGV.shift
+			flag_comparison = true
 		elsif arg == "-o"
 			output_dir = ARGV.shift
 			output_dir = output_dir.gsub(/\/$/, "")
@@ -118,7 +120,7 @@ if sample_sheet_fn.nil?
 	puts "ERROR: sample_sheet_file must be specified"
 	exit -1
 end
-if comparison_sheet_fn.nil?
+if flag_comparison && comparison_sheet_fn.nil?
 	puts "ERROR: comparison_file must be specified"
 	exit -1
 end
@@ -189,14 +191,17 @@ if genome.nil?
 	puts "ERROR: genome must be specified"
 	exit -1
 else
-	if !(genome == "hg19" || genome == "mm10")
-		puts "ERROR: genome must be 'hg19' or 'mm10'"
+	if !(genome == "hg19" || genome == "GRCh38" || genome == "mm10")
+		puts "ERROR: genome must be 'hg19', 'GRCh38', or 'mm10'"
 		exit -1
 	end
 end
 if !(de_pipeline == "tuxedo" || de_pipeline == "htseq" || de_pipeline == "kallisto")
 	puts "ERROR: de-pipeline must be 'htseq', 'tuxedo', or 'kallisto'"
 	exit -1
+end
+if (de_pipeline == "kallisto")
+	flag_kallisto = true
 end
 
 if !File.exists?(output_code_dir)
@@ -238,20 +243,22 @@ File.open(sample_sheet_fn).each_line do |line|
 	end
 end
 # read in comparison sheet
-comparisons = Array.new
-comparison_header = Array.new
-first = true
-File.open(comparison_sheet_fn).each_line do |line|
-	if first
-		comparison_header = line.chomp.split(/\t/)
-		first = false
-	else
-		this = Hash.new
-		arr = line.chomp.split(/\t/)
-		0.upto(comparison_header.length-1) do |i|
-			this[comparison_header[i]] = arr[i]
+if flag_comparison
+	comparisons = Array.new
+	comparison_header = Array.new
+	first = true
+	File.open(comparison_sheet_fn).each_line do |line|
+		if first
+			comparison_header = line.chomp.split(/\t/)
+			first = false
+		else
+			this = Hash.new
+			arr = line.chomp.split(/\t/)
+			0.upto(comparison_header.length-1) do |i|
+				this[comparison_header[i]] = arr[i]
+			end
+			comparisons << this
 		end
-		comparisons << this
 	end
 end
 
@@ -569,111 +576,113 @@ if de_pipeline == "tuxedo"
 		out_fp.puts "[ -f \"#{output_cuffquant_dir}/#{sample_id}/abundances.cxb\" ] || (echo \"ERROR: #{output_cuffquant_dir}/#{sample_id}/abundances.cxb not found!\" && exit)"
 	}
 
-	out_fp.puts "", "###\td. Cuffdiff"
-	out_fp.puts "#\tINPUT:"
-	out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}/abundances.cxb"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	out_fp.puts "mkdir -p #{output_cuffdiff_dir}"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		cxb_condA = Array.new
-		cxb_condB = Array.new
+	if flag_comparison
+		out_fp.puts "", "###\td. Cuffdiff"
+		out_fp.puts "#\tINPUT:"
+		out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
 		samples.each { |sample|
 			sample_id = sample["sample_id"]
-			if (sample[characteristic] == condA)
-				cxb_condA << "#{output_cuffquant_dir}/#{sample_id}/abundances.cxb"
-			elsif (sample[characteristic] == condB)
-				cxb_condB << "#{output_cuffquant_dir}/#{sample_id}/abundances.cxb"
-			end
+			out_fp.puts "#\t\t#{sample_id}/abundances.cxb"
 		}
-		outA = cxb_condA.join(",")
-		outB = cxb_condB.join(",")
-		out_fp.puts "cuffdiff --output-dir #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB} --labels #{condA},#{condB} -p #{num_tophat_threads} --compatible-hits-norm --multi-read-correct --library-norm-method geometric --dispersion-method pooled --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/"
-	}
-	out_fp.puts "#\tCHECKPOINT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "[ -f \"#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff\" ] || (echo \"ERROR: #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff not found!\" && exit)"
-	}
+		out_fp.puts "#\tEXECUTION:"
+		out_fp.puts "mkdir -p #{output_cuffdiff_dir}"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			cxb_condA = Array.new
+			cxb_condB = Array.new
+			samples.each { |sample|
+				sample_id = sample["sample_id"]
+				if (sample[characteristic] == condA)
+					cxb_condA << "#{output_cuffquant_dir}/#{sample_id}/abundances.cxb"
+				elsif (sample[characteristic] == condB)
+					cxb_condB << "#{output_cuffquant_dir}/#{sample_id}/abundances.cxb"
+				end
+			}
+			outA = cxb_condA.join(",")
+			outB = cxb_condB.join(",")
+			out_fp.puts "cuffdiff --output-dir #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB} --labels #{condA},#{condB} -p #{num_tophat_threads} --compatible-hits-norm --multi-read-correct --library-norm-method geometric --dispersion-method pooled --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
+		}
+		out_fp.puts "#\tOUTPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/"
+		}
+		out_fp.puts "#\tCHECKPOINT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "[ -f \"#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff\" ] || (echo \"ERROR: #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff not found!\" && exit)"
+		}
 
-	out_fp.puts "", "###\te. cummeRbund"
-	out_fp.puts "#\tINPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/"
-	}
-	out_fp.puts "#\tREQUIRED DATA FILES:"
-	out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
-	out_fp.puts "#\tEXECUTION:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "./run_cummeRbund.R #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB} #{condA},#{condB} #{output_cuffmerge_dir}/merged.gtf #{genome} #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf"
-	}
-	out_fp.puts "#\tCHECKPOINT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "[ -s \"#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf\" ] || (echo \"ERROR: #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf is empty!\" && exit)"
-	}
+		out_fp.puts "", "###\te. cummeRbund"
+		out_fp.puts "#\tINPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/"
+		}
+		out_fp.puts "#\tREQUIRED DATA FILES:"
+		out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
+		out_fp.puts "#\tEXECUTION:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "./run_cummeRbund.R #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB} #{condA},#{condB} #{output_cuffmerge_dir}/merged.gtf #{genome} #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf"
+		}
+		out_fp.puts "#\tOUTPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf"
+		}
+		out_fp.puts "#\tCHECKPOINT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "[ -s \"#{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf\" ] || (echo \"ERROR: #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}.cummeRbund.pdf is empty!\" && exit)"
+		}
 
-	out_fp.puts "", "###\tf. GSEA"
-	out_fp.puts "#\tINPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.cuffdiff_output/gene_exp.diff"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	out_fp.puts "mkdir -p #{output_gsea_dir}"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "mkdir #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/"
-		out_fp.puts "if [ -d \"#{output_gsea_dir}/tmp.GSEA_output/\" ]; then", "\trmdir #{output_dir}/tmp.GSEA_output/" ,"fi"
-		out_fp.puts "mkdir #{output_gsea_dir}/tmp.GSEA_output/"
-		out_fp.puts "awk 'BEGIN {OFS=\"\\t\";FS=\"\\t\";} {if ($14==\"yes\") {print $3,log(($8+0.1)/($9+0.1))/log(2)}}' #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff > #{output_gsea_dir}/tmp.GSEA_output/cuffdiff_hits.rnk"
-		out_fp.puts "java -cp $GSEAPATH/gsea2-2.1.0.jar -Xmx512m xtools.gsea.GseaPreranked -rnk #{output_gsea_dir}/tmp.GSEA_output/cuffdiff_hits.rnk -gmx $GSEAPATH/msigdb.v4.0.symbols.gmt -scoring_scheme classic -collapse false -set_min 15 -out #{output_gsea_dir}/tmp.GSEA_output -rpt_label \"tmp\" -zip_report true"
-		out_fp.puts "mv #{output_gsea_dir}/tmp.GSEA_output/* #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/"
-		out_fp.puts "mv #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/tmp.GseaPreranked.* #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}.GSEA_output/#{characteristic}-#{condA}-#{condB}.GseaPreranked/"
-		out_fp.puts "mv #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/#{characteristic}-#{condA}-#{condB}.GseaPreranked/*.zip #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/report.zip"
-		out_fp.puts "rmdir #{output_gsea_dir}/tmp.GSEA_output/"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/report.zip"
-	}
+		out_fp.puts "", "###\tf. GSEA"
+		out_fp.puts "#\tINPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.cuffdiff_output/gene_exp.diff"
+		}
+		out_fp.puts "#\tEXECUTION:"
+		out_fp.puts "mkdir -p #{output_gsea_dir}"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "mkdir #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/"
+			out_fp.puts "if [ -d \"#{output_gsea_dir}/tmp.GSEA_output/\" ]; then", "\trmdir #{output_dir}/tmp.GSEA_output/" ,"fi"
+			out_fp.puts "mkdir #{output_gsea_dir}/tmp.GSEA_output/"
+			out_fp.puts "awk 'BEGIN {OFS=\"\\t\";FS=\"\\t\";} {if ($14==\"yes\") {print $3,log(($8+0.1)/($9+0.1))/log(2)}}' #{output_cuffdiff_dir}/#{characteristic}-#{condA}-#{condB}/gene_exp.diff > #{output_gsea_dir}/tmp.GSEA_output/cuffdiff_hits.rnk"
+			out_fp.puts "java -cp $GSEAPATH/gsea2-2.1.0.jar -Xmx512m xtools.gsea.GseaPreranked -rnk #{output_gsea_dir}/tmp.GSEA_output/cuffdiff_hits.rnk -gmx $GSEAPATH/msigdb.v4.0.symbols.gmt -scoring_scheme classic -collapse false -set_min 15 -out #{output_gsea_dir}/tmp.GSEA_output -rpt_label \"tmp\" -zip_report true"
+			out_fp.puts "mv #{output_gsea_dir}/tmp.GSEA_output/* #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/"
+			out_fp.puts "mv #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/tmp.GseaPreranked.* #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}.GSEA_output/#{characteristic}-#{condA}-#{condB}.GseaPreranked/"
+			out_fp.puts "mv #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/#{characteristic}-#{condA}-#{condB}.GseaPreranked/*.zip #{output_gsea_dir}/#{characteristic}-#{condA}-#{condB}/report.zip"
+			out_fp.puts "rmdir #{output_gsea_dir}/tmp.GSEA_output/"
+		}
+		out_fp.puts "#\tOUTPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/report.zip"
+		}
+	end
 elsif de_pipeline == "htseq"
 	out_fp.puts "","","################################################"
 	out_fp.puts "###\t2. Differential expression analysis using Tophat/HTSeq/DESeq2/edgeR pipeline"
@@ -727,171 +736,174 @@ elsif de_pipeline == "htseq"
 		out_fp.puts "[ -f \"#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt\" ] || (echo \"ERROR: #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt not found!\" && exit)"
 	}
 	
-	out_fp.puts "", "###\tb. Create read count matrix for each comparison"
-	out_fp.puts "#\tINPUT:"
-	out_fp.puts "#\t\tCOMPARISON.txt"
-	out_fp.puts "#\t\tSAMPLE_SHEET.txt"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		condA_files = Array.new
-		condB_files = Array.new
-		condA_samples = Array.new
-		condB_samples = Array.new
-		factors = Array.new
+	if flag_comparison
+		out_fp.puts "", "###\tb. Create read count matrix for each comparison"
+		out_fp.puts "#\tINPUT:"
+		out_fp.puts "#\t\tCOMPARISON.txt"
+		out_fp.puts "#\t\tSAMPLE_SHEET.txt"
 		samples.each { |sample|
 			sample_id = sample["sample_id"]
-			if (sample[characteristic] == condA)
-				condA_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
-				condA_samples << sample_id
-				factors << condA
-			elsif (sample[characteristic] == condB)
-				condB_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
-				condB_samples << sample_id
-				factors << condB
-			end
+			out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
 		}
-		header = [condA_samples, condB_samples].join("\t")
-		out_fp.puts "mkdir -p #{output_deseq2_dir}"
-		out_fp.puts "mkdir -p #{output_edger_dir}"
-		out_fp.puts "mkdir -p #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/"
-		out_fp.puts "mkdir -p #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/"
-		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		header = [condA_files, condB_files].join(" ")
-		farr = Array.new
-		farr << 1
-		1.upto(condA_files.length+condB_files.length) do |i|
-			farr << i*2
-		end
-		fstr = farr.join(",")
-		out_fp.puts "paste #{header} | cut -f#{fstr} >> #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		header = [Array.new(condA_files.length, condA), Array.new(condB_files.length, condB)].join(",")
-		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
+		out_fp.puts "#\tEXECUTION:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			condA_files = Array.new
+			condB_files = Array.new
+			condA_samples = Array.new
+			condB_samples = Array.new
+			factors = Array.new
+			samples.each { |sample|
+				sample_id = sample["sample_id"]
+				if (sample[characteristic] == condA)
+					condA_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condA_samples << sample_id
+					factors << condA
+				elsif (sample[characteristic] == condB)
+					condB_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condB_samples << sample_id
+					factors << condB
+				end
+			}
+			header = [condA_samples, condB_samples].join("\t")
+			out_fp.puts "mkdir -p #{output_deseq2_dir}"
+			out_fp.puts "mkdir -p #{output_edger_dir}"
+			out_fp.puts "mkdir -p #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/"
+			out_fp.puts "mkdir -p #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/"
+			out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			header = [condA_files, condB_files].join(" ")
+			farr = Array.new
+			farr << 1
+			1.upto(condA_files.length+condB_files.length) do |i|
+				farr << i*2
+			end
+			fstr = farr.join(",")
+			out_fp.puts "paste #{header} | cut -f#{fstr} >> #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			header = [Array.new(condA_files.length, condA), Array.new(condB_files.length, condB)].join(",")
+			out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
 		
-		out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	
-	out_fp.puts "", "###\tc. Run DESeq2/edgeR"
-	out_fp.puts "#\tINPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "./run_DESeq2.R #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
-		out_fp.puts "./run_edgeR.R #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
-	}
-	out_fp.puts "#\tOUTPUT:"
+			out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			out_fp.puts "cp #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+		out_fp.puts "#\tOUTPUT:"
 		comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.pdf"
-	}
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+	
+		out_fp.puts "", "###\tc. Run DESeq2/edgeR"
+		out_fp.puts "#\tINPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+		out_fp.puts "#\tEXECUTION:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "./run_DESeq2.R #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
+			out_fp.puts "./run_edgeR.R #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_edger_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
+		}
+		out_fp.puts "#\tOUTPUT:"
+			comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.pdf"
+		}
+	end
 elsif de_pipeline == "kallisto"
-	out_fp.puts "","","################################################"
-	out_fp.puts "###\ta. Create read count matrix for each comparison"
-	out_fp.puts "#\tINPUT:"
-	out_fp.puts "#\t\tCOMPARISON.txt"
-	out_fp.puts "#\t\tSAMPLE_SHEET.txt"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}/abundance.gene.tsv"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		condA_files = Array.new
-		condB_files = Array.new
-		condA_samples = Array.new
-		condB_samples = Array.new
-		factors = Array.new
+	if flag_comparison
+		out_fp.puts "","","################################################"
+		out_fp.puts "###\ta. Create read count matrix for each comparison"
+		out_fp.puts "#\tINPUT:"
+		out_fp.puts "#\t\tCOMPARISON.txt"
+		out_fp.puts "#\t\tSAMPLE_SHEET.txt"
 		samples.each { |sample|
 			sample_id = sample["sample_id"]
-			if (sample[characteristic] == condA)
-				condA_files << "#{output_kallisto_dir}/#{sample_id}/abundance.gene.tsv"
-				condA_samples << sample_id
-				factors << condA
-			elsif (sample[characteristic] == condB)
-				condB_files << "#{output_kallisto_dir}/#{sample_id}/abundance.gene.tsv"
-				condB_samples << sample_id
-				factors << condB
-			end
+			out_fp.puts "#\t\t#{sample_id}/abundance.gene.tsv"
 		}
-		header = [condA_samples, condB_samples].join("\t")
-		out_fp.puts "mkdir -p #{output_deseq2_dir}"
-		out_fp.puts "mkdir -p #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/"
-		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		header = [condA_files, condB_files].join(" ")
-		farr = Array.new
-		farr << 1
-		1.upto(condA_files.length+condB_files.length) do |i|
-			farr << i*2
-		end
-		fstr = farr.join(",")
-		out_fp.puts "paste #{header} | cut -f#{fstr} >> #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		header = [Array.new(condA_files.length, condA), Array.new(condB_files.length, condB)].join(",")
-		out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	
-	out_fp.puts "", "###\tb. Run DESeq2"
-	out_fp.puts "#\tINPUT:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
-	}
-	out_fp.puts "#\tEXECUTION:"
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "./run_DESeq2.R #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
-	}
-	out_fp.puts "#\tOUTPUT:"
+		out_fp.puts "#\tEXECUTION:"
 		comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.txt"
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.pdf"
-	}
-
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			condA_files = Array.new
+			condB_files = Array.new
+			condA_samples = Array.new
+			condB_samples = Array.new
+			factors = Array.new
+			samples.each { |sample|
+				sample_id = sample["sample_id"]
+				if (sample[characteristic] == condA)
+					condA_files << "#{output_kallisto_dir}/#{sample_id}/abundance.gene.tsv"
+					condA_samples << sample_id
+					factors << condA
+				elsif (sample[characteristic] == condB)
+					condB_files << "#{output_kallisto_dir}/#{sample_id}/abundance.gene.tsv"
+					condB_samples << sample_id
+					factors << condB
+				end
+			}
+			header = [condA_samples, condB_samples].join("\t")
+			out_fp.puts "mkdir -p #{output_deseq2_dir}"
+			out_fp.puts "mkdir -p #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/"
+			out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			header = [condA_files, condB_files].join(" ")
+			farr = Array.new
+			farr << 1
+			1.upto(condA_files.length+condB_files.length) do |i|
+				farr << i*2
+			end
+			fstr = farr.join(",")
+			out_fp.puts "paste #{header} | cut -f#{fstr} >> #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			header = [Array.new(condA_files.length, condA), Array.new(condB_files.length, condB)].join(",")
+			out_fp.puts "echo \"#{header}\" > #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+		out_fp.puts "#\tOUTPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+	
+		out_fp.puts "", "###\tb. Run DESeq2"
+		out_fp.puts "#\tINPUT:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/read_counts.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/factors.txt"
+		}
+		out_fp.puts "#\tEXECUTION:"
+		comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "./run_DESeq2.R #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/read_counts.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/factors.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.UP.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.DOWN.txt #{output_deseq2_dir}/#{characteristic}-#{condA}-#{condB}/results.pdf"
+		}
+		out_fp.puts "#\tOUTPUT:"
+			comparisons.each { |comparison|
+			characteristic = comparison["characteristic"]
+			condA = comparison["condition_A"]
+			condB = comparison["condition_B"]
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.txt"
+			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.pdf"
+		}
+	end
 end
 
 if analysis_type == "advanced" && 0 == 1

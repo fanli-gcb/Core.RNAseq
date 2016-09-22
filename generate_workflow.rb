@@ -8,7 +8,7 @@ flag_comparison = false
 flag_kallisto = false
 flag_cuffmerge = true
 flag_qualitytrim = true # changed to true by default
-de_pipeline = "htseq" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTSeq/scde
+de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTSeq/scde, "kallisto" for kallisto+monocle
 read_mismatches = 2
 read_gap_length = 2
 read_edit_dist = 2
@@ -173,13 +173,13 @@ if genome.nil?
 	puts "ERROR: genome must be specified"
 	exit -1
 else
-	if !(genome == "hg19" || genome == "mm10")
-		puts "ERROR: genome must be 'hg19' or 'mm10'"
+	if !(genome == "hg19" || genome == "mm10" || genome == "GRCh38")
+		puts "ERROR: genome must be 'hg19', 'GRCh38', or 'mm10'"
 		exit -1
 	end
 end
-if !(de_pipeline == "tuxedo" || de_pipeline == "htseq")
-	puts "ERROR: de-pipeline must be 'htseq' or 'tuxedo'"
+if !(de_pipeline == "tuxedo" || de_pipeline == "htseq" || de_pipeline == "kallisto")
+	puts "ERROR: de-pipeline must be 'htseq', 'kallisto', or 'tuxedo'"
 	exit -1
 end
 
@@ -195,6 +195,10 @@ str_transcriptomeOnly = (flag_transcriptomeOnly) ? "--transcriptome-only" : ""
 if genes_gtf_file.nil?
 	genes_gtf_file = "/Lab_Share/iGenomes/#{genome}/Annotation/Genes/genes.gtf"
 	genes_gtf_index = "/Lab_Share/iGenomes/#{genome}/Annotation/Genes/genes"
+end
+
+if (de_pipeline == "kallisto")
+	flag_kallisto = true
 end
 if ((kallisto_index_file.nil? || transcript_to_gene_file.nil?) && flag_kallisto)
 	puts "ERROR: --kallisto-index and --transcript-to-gene-file must be specified if --kallisto is flagged!"
@@ -282,7 +286,7 @@ if flag_qualitytrim
 		j = 1
 		sample["fastq"].split(",").each { |fastq_str|
 			sample_name = fastq_str.gsub(".fastq.gz", "").gsub(".fastq","")
-			if (File.basename(fastq_str)=="gz")
+			if (File.extname(fastq_str)==".gz")
 				extstr = "fq.gz"
 				extstr2 = "fastq.gz"
 			else
