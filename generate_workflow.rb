@@ -8,13 +8,14 @@ flag_comparison = false
 flag_kallisto = false
 flag_cuffmerge = true
 flag_qualitytrim = true # changed to true by default
+aligner = "hisat2" # use HISAT2 aligner by default, tophat2 as an option
 de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTSeq/scde, "kallisto" for kallisto+monocle
 read_mismatches = 2
 read_gap_length = 2
 read_edit_dist = 2
 max_multihits = 10
 num_jobs = 1 # used to split tophat/QC/cuffetc steps into multiple batches
-num_tophat_threads = 6	# used for Tuxedo suite multithreading
+num_alignment_threads = 6	# used for Tuxedo suite multithreading
 
 full_command = ARGV.join(" ")
 
@@ -31,6 +32,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output-tophat-dir"
 			output_tophat_dir = ARGV.shift
 			output_tophat_dir = output_tophat_dir.gsub(/\/$/, "")
+		elsif arg == "--output-hisat2-dir"
+			output_hisat2_dir = ARGV.shift
+			output_tophisat2_dir = output_hisat2_dir.gsub(/\/$/, "")
 		elsif arg == "--output-QC-dir"
 			output_QC_dir = ARGV.shift
 			output_QC_dir = output_QC_dir.gsub(/\/$/, "")
@@ -75,8 +79,8 @@ if (ARGV.size >= 6)
 			flag_cuffmerge = false
 		elsif arg == "--num-jobs"
 			num_jobs = ARGV.shift.to_i
-		elsif arg == "--num-tophat-threads"
-			num_tophat_threads = ARGV.shift.to_i
+		elsif arg == "--num-alignment-threads"
+			num_alignment_threads = ARGV.shift.to_i
 		elsif arg == "--read-mismatches"
 			read_mismatches = ARGV.shift.to_i
 		elsif arg == "--read-gap-length"
@@ -96,13 +100,15 @@ if (ARGV.size >= 6)
 			transcript_to_gene_file = ARGV.shift
 		elsif arg == "--dont-quality-trim"
 			flag_qualitytrim = false
+		elsif arg == "--aligner"
+			aligner = ARGV.shift
 		else
 			puts "ERROR: Unrecognized option #{arg}"
 			exit -1
 		end
 	end	
 else
-	puts "USAGE: #{$0} -s sample_sheet_file -c comparison_file -g hg19|mm10 --output-code-dir output_code_dir -o output_dir -a analysis_type -p project [--transcriptome-only] [--num-jobs num_jobs] [--num-tophat-threads num_tophat_threads] [--de-pipeline de_pipeline] [--genes-gtf genes_gtf_file]"
+	puts "USAGE: #{$0} -s sample_sheet_file -c comparison_file -g GRCh38|hg19|mm10 --output-code-dir output_code_dir -o output_dir -a analysis_type -p project [--transcriptome-only] [--num-jobs num_jobs] [--num-alignment-threads num_alignment_threads] [--de-pipeline de_pipeline] [--aligner hisat2|tophat] [--genes-gtf genes_gtf_file]"
 	exit -1
 end
 
@@ -129,6 +135,9 @@ end
 #		#{output_dir}/DESeq2
 if output_tophat_dir.nil?
 	output_tophat_dir = "#{output_dir}/tophat"
+end
+if output_hisat2_dir.nil?
+	output_hisat2_dir = "#{output_dir}/hisat2"
 end
 if output_QC_dir.nil?
 	output_QC_dir = "#{output_dir}/QC"
@@ -180,6 +189,14 @@ else
 end
 if !(de_pipeline == "tuxedo" || de_pipeline == "htseq" || de_pipeline == "kallisto")
 	puts "ERROR: de-pipeline must be 'htseq', 'kallisto', or 'tuxedo'"
+	exit -1
+end
+if (aligner == "tophat")
+	output_alignment_dir = output_tophat_dir
+elsif (aligner == "hisat2") 
+	output_alignment_dir = output_hisat2_dir
+else
+	puts "ERROR: aligner must be 'hisat2' or 'tophat'"
 	exit -1
 end
 
@@ -279,7 +296,7 @@ if flag_qualitytrim
 		fastq_str = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }.join(" ")
 		out_files = sample["fastq"].gsub(".fastq.gz", "").gsub(".fastq", "") # only the basename
 		out_str = out_files.split(",").collect { |x| "#{fastq_dir}/#{x}.trimmed.fastq.gz #{fastq_dir}/#{x}.unpaired.fastq.gz" }.join(" ")
-#		cmd = "java -jar /mnt/Trimmomatic-0.33/trimmomatic-0.33.jar PE -threads #{num_tophat_threads} -phred33 #{fastq_str} #{out_str} LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 2>> #{fastq_dir}/trim.log"
+#		cmd = "java -jar /mnt/Trimmomatic-0.33/trimmomatic-0.33.jar PE -threads #{num_alignment_threads} -phred33 #{fastq_str} #{out_str} LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 2>> #{fastq_dir}/trim.log"
 		cmd = "/mnt/trim_galore/trim_galore --fastqc_args \"--outdir=#{fastq_dir}\" --stringency 1 --output_dir #{fastq_dir} --paired #{fastq_str}"
 		sub_fps[(i % num_jobs)].puts(cmd)
 		i += 1
@@ -308,7 +325,7 @@ end
 
 out_fp.puts "################################################"
 out_fp.puts "###\t1. Alignment and QC metrics"
-out_fp.puts "###\ta. Run Tophat"
+out_fp.puts "###\ta. Run #{aligner}"
 out_fp.puts "#\tINPUT:"
 samples.each { |sample|
 	out = sample["fastq"].split(",")
@@ -317,22 +334,36 @@ samples.each { |sample|
 	}
 }
 out_fp.puts "#\tREQUIRED DATA FILES"
-out_fp.puts "#\t\t*.bt2 files"
+out_fp.puts "#\t\tHISAT2/tophat index files"
 out_fp.puts "#\t\t#{genes_gtf_file}"
 out_fp.puts "#\tEXECUTION:"
 sub_fps.clear
-out_fp.puts "mkdir -p #{output_tophat_dir}"
+out_fp.puts "mkdir -p #{output_alignment_dir}"
 1.upto(num_jobs) do |i|
-	sub_fps << File.new("#{output_code_dir}/workflow.#{project}.tophat.#{i}.sh", "w")
-	out_fp.puts "bash workflow.#{project}.tophat.#{i}.sh &> workflow.#{project}.tophat.#{i}.log &"
+	sub_fps << File.new("#{output_code_dir}/workflow.#{project}.align.#{i}.sh", "w")
+	out_fp.puts "bash workflow.#{project}.align.#{i}.sh &> workflow.#{project}.align.#{i}.log &"
 end
 out_fp.puts "wait"
 i = 0
 samples.each { |sample|
 	sample_id = sample["sample_id"]
 	libtype = sample["library-type"]
-	fastq_str = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }.join(" ")
-	cmd = "tophat --read-mismatches #{read_mismatches} --read-gap-length #{read_gap_length} --read-edit-dist #{read_edit_dist} --max-multihits #{max_multihits} --library-type #{libtype} --GTF #{genes_gtf_file} --transcriptome-index #{genes_gtf_index} #{str_transcriptomeOnly} --num-threads #{num_tophat_threads} --output-dir #{output_tophat_dir}/#{sample_id} /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{fastq_str}"
+	if aligner == "tophat"
+		fastq_str = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }.join(" ")
+		cmd = "tophat --read-mismatches #{read_mismatches} --read-gap-length #{read_gap_length} --read-edit-dist #{read_edit_dist} --max-multihits #{max_multihits} --library-type #{libtype} --GTF #{genes_gtf_file} --transcriptome-index #{genes_gtf_index} #{str_transcriptomeOnly} --num-threads #{num_alignment_threads} --output-dir #{output_alignment_dir}/#{sample_id} /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{fastq_str}"
+	elsif aligner == "hisat2"
+		sub_fps[(i % num_jobs)].puts("mkdir -p #{output_alignment_dir}/#{sample_id}")
+		arr = sample["fastq"].split(",")
+		if arr.length == 1
+			fastq_str = "-U #{fastq_dir}/#{arr}"
+		elsif arr.length == 2
+			fastq_str = "-1 #{fastq_dir}/#{arr[0]} -2 #{fastq_dir}/#{arr[1]}"
+		else
+			puts "ERROR: invalid fastq string!"
+			exit -1
+		end
+		cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
+	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
 }
@@ -343,12 +374,12 @@ sub_fps.each { |fp|
 out_fp.puts "#\tOUTPUT:"
 samples.each { |sample|
   sample_id = sample["sample_id"]
-	out_fp.puts "#\t\t#{output_tophat_dir}/#{sample_id}"
+	out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}"
 }
 out_fp.puts "#\tCHECKPOINT:"
 samples.each { |sample|
   sample_id = sample["sample_id"]
-	out_fp.puts "[ -f \"#{output_tophat_dir}/#{sample_id}/accepted_hits.bam\" ] || (echo \"ERROR: #{output_tophat_dir}/#{sample_id}/accepted_hits.bam not found!\" && exit)"
+	out_fp.puts "[ -f \"#{output_alignment_dir}/#{sample_id}/accepted_hits.bam\" ] || (echo \"ERROR: #{output_alignment_dir}/#{sample_id}/accepted_hits.bam not found!\" && exit)"
 }
 
 out_fp.puts "", "###\tb. Library-level QC metrics"
@@ -403,8 +434,8 @@ samples.each { |sample|
 out_fp.puts "#\tEXECUTION:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectInsertSizeMetrics.jar INPUT=#{output_tophat_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.txt HISTOGRAM_FILE=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.pdf"
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/EstimateLibraryComplexity.jar INPUT=#{output_tophat_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.EstimatedLibraryComplexity.txt"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectInsertSizeMetrics.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.txt HISTOGRAM_FILE=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.pdf"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/EstimateLibraryComplexity.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.EstimatedLibraryComplexity.txt"
 	i += 1
 }
 out_fp.puts "#\tOUTPUT:"
@@ -436,7 +467,7 @@ samples.each { |sample|
 		out_fp.puts "ERROR: Invalid library-type #{libtype}"
 		exit -1
 	end
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectRnaSeqMetrics.jar INPUT=#{output_tophat_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.pdf REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.interval_list"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectRnaSeqMetrics.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.pdf REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.interval_list"
 	sub_fps[(i % num_jobs)].puts "./plot_RnaSeqMetrics.R #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.class.pdf"
 	i += 1
 }
@@ -453,9 +484,9 @@ samples.each { |sample|
 
 out_fp.puts "", "###\te. Summarize various mapping stats"
 out_fp.puts "#\tINPUT:"
-out_fp.puts "#\t\ttophat_output directories", "#\t\t*.RnaSeqMetrics.txt"
+out_fp.puts "#\t\talignment output directories", "#\t\t*.RnaSeqMetrics.txt"
 out_fp.puts "#\tEXECUTION:"
-out_fp.puts "./summ_mapping_stats.R #{output_tophat_dir} #{output_QC_dir}/mapping_stats.#{project}.txt #{output_QC_dir}/mapping_stats.#{project}.pdf"
+out_fp.puts "./summ_mapping_stats.R #{output_alignment_dir} #{output_QC_dir}/mapping_stats.#{project}.txt #{output_QC_dir}/mapping_stats.#{project}.pdf"
 out_fp.puts "./summ_rnaseq_stats.R #{output_QC_dir} #{output_QC_dir}/rnaseq_stats.#{project}.txt #{output_QC_dir}/rnaseq_stats.#{project}.pdf"
 out_fp.puts "./summ_duplication_stats.R #{output_QC_dir} #{output_QC_dir}/duplication_stats.#{project}.txt #{output_QC_dir}/duplication_stats.#{project}.pdf"
 out_fp.puts "#\tOUTPUT:"
@@ -489,7 +520,7 @@ if flag_kallisto
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
 		fastq_str = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }.join(" ")
-		cmd = "kallisto quant -i #{kallisto_index_file} -o #{output_kallisto_dir}/#{sample_id} -b 100 -t #{num_tophat_threads} #{fastq_str}"
+		cmd = "kallisto quant -i #{kallisto_index_file} -o #{output_kallisto_dir}/#{sample_id} -b 100 -t #{num_alignment_threads} #{fastq_str}"
 		sub_fps[(i % num_jobs)].puts(cmd)
 		i += 1
 	}
@@ -539,7 +570,7 @@ if de_pipeline == "tuxedo"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-		cmd = "cufflinks --output-dir #{output_cufflinks_dir}/#{sample_id} --num-threads #{num_tophat_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_tophat_dir}/#{sample_id}/accepted_hits.bam"
+		cmd = "cufflinks --output-dir #{output_cufflinks_dir}/#{sample_id} --num-threads #{num_alignment_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -572,7 +603,7 @@ if de_pipeline == "tuxedo"
 			sample_id = sample["sample_id"]
 			out_fp.puts "echo \"#{output_cufflinks_dir}/#{sample_id}/transcripts.gtf\" >> #{output_cuffmerge_dir}/assembly_list.txt"
 		}
-		out_fp.puts "cuffmerge -o #{output_cuffmerge_dir} --ref-gtf #{genes_gtf_file} -p #{num_tophat_threads} --ref-sequence /Lab_Share/iGenomes/#{genome}/Sequence/Chromosomes #{output_cuffmerge_dir}/assembly_list.txt"
+		out_fp.puts "cuffmerge -o #{output_cuffmerge_dir} --ref-gtf #{genes_gtf_file} -p #{num_alignment_threads} --ref-sequence /Lab_Share/iGenomes/#{genome}/Sequence/Chromosomes #{output_cuffmerge_dir}/assembly_list.txt"
 		out_fp.puts "#\tOUTPUT:"
 		out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
 		out_fp.puts "#\tCHECKPOINT:"
@@ -601,7 +632,7 @@ if de_pipeline == "tuxedo"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-		sub_fps[(i % num_jobs)].puts "cuffquant --output-dir #{output_cuffquant_dir}/#{sample_id} -p #{num_tophat_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_tophat_dir}/#{sample_id}/accepted_hits.bam"
+		sub_fps[(i % num_jobs)].puts "cuffquant --output-dir #{output_cuffquant_dir}/#{sample_id} -p #{num_alignment_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
 		i += 1
 	}
 	sub_fps.each { |fp|
@@ -643,7 +674,7 @@ if de_pipeline == "tuxedo"
 			}
 			outA = cxb_condA.join(",")
 			outB = cxb_condB.join(",")
-			out_fp.puts "cuffdiff --output-dir #{output_dir}/#{characteristic}-#{condA}-#{condB}.cuffdiff_output --labels #{condA},#{condB} -p #{num_tophat_threads} --compatible-hits-norm --multi-read-correct --library-norm-method geometric --dispersion-method pooled --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
+			out_fp.puts "cuffdiff --output-dir #{output_dir}/#{characteristic}-#{condA}-#{condB}.cuffdiff_output --labels #{condA},#{condB} -p #{num_alignment_threads} --compatible-hits-norm --multi-read-correct --library-norm-method geometric --dispersion-method pooled --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
 		}
 		out_fp.puts "#\tOUTPUT:"
 		comparisons.each { |comparison|
@@ -751,7 +782,7 @@ if de_pipeline == "tuxedo"
 				}
 				outA = cxb_condA.join(",")
 				outB = cxb_condB.join(",")
-				out_fp.puts "cuffnorm --output-dir #{output_dir}/#{characteristic}-#{condA}-#{condB}.cuffnorm_output --labels #{condA},#{condB} -p #{num_tophat_threads} --compatible-hits-norm --library-norm-method geometric --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
+				out_fp.puts "cuffnorm --output-dir #{output_dir}/#{characteristic}-#{condA}-#{condB}.cuffnorm_output --labels #{condA},#{condB} -p #{num_alignment_threads} --compatible-hits-norm --library-norm-method geometric --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{outA} #{outB}"
 			}
 			out_fp.puts "#\tOUTPUT:"
 			comparisons.each { |comparison|
@@ -865,9 +896,9 @@ elsif de_pipeline == "htseq"
 			puts "ERROR: invalid library-type #{libtype}"
 			exit -1
 		end
-		cmd = "samtools sort -n #{output_tophat_dir}/#{sample_id}/accepted_hits.bam #{output_tophat_dir}/#{sample_id}/accepted_hits.namesorted"
+		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted"
 		sub_fps[(i % num_jobs)].puts cmd
-		cmd = "htseq-count -f bam -r name -s #{libtype_str} -m union #{output_tophat_dir}/#{sample_id}/accepted_hits.namesorted.bam #{genes_gtf_file} > #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+		cmd = "htseq-count -f bam -r name -s #{libtype_str} -m union #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam #{genes_gtf_file} > #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -1044,7 +1075,7 @@ if analysis_type == "advanced"
 	out_fp.puts "#\t\t#{genes_gtf_file}"
 	out_fp.puts "#\tEXECUTION:"
 	sub_fps.clear
-	out_fp.puts "mkdir -p #{output_saturation_dir}/tophat"
+	out_fp.puts "mkdir -p #{output_saturation_dir}/#{aligner}"
 	1.upto(num_jobs) do |i|
 		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.saturation.#{i}.sh", "w")
 		out_fp.puts "bash workflow.#{project}.saturation.#{i}.sh &> workflow.#{project}.saturation.#{i}.log &"
@@ -1055,8 +1086,22 @@ if analysis_type == "advanced"
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
 		saturation_subsets.each { |saturation_subset|
-			fastq_str = sample["fastq"].split(",").collect { |x| "#{output_saturation_dir}/fastq/#{x}.sub_#{saturation_subset}" }.join(" ")
-			cmd = "tophat --read-mismatches #{read_mismatches} --read-gap-length #{read_gap_length} --read-edit-dist #{read_edit_dist} --max-multihits #{max_multihits} --library-type #{libtype} --GTF #{genes_gtf_file} --transcriptome-index #{genes_gtf_index} #{str_transcriptomeOnly} --num-threads #{num_tophat_threads} --output-dir #{output_saturation_dir}/tophat/#{sample_id}.sub_#{saturation_subset} /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{fastq_str}"
+			if aligner == "tophat"
+				fastq_str = sample["fastq"].split(",").collect { |x| "#{output_saturation_dir}/fastq/#{x}.sub_#{saturation_subset}" }.join(" ")
+				cmd = "tophat --read-mismatches #{read_mismatches} --read-gap-length #{read_gap_length} --read-edit-dist #{read_edit_dist} --max-multihits #{max_multihits} --library-type #{libtype} --GTF #{genes_gtf_file} --transcriptome-index #{genes_gtf_index} #{str_transcriptomeOnly} --num-threads #{num_alignment_threads} --output-dir #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset} /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{fastq_str}"
+			elsif aligner == "hisat2"
+				puts "mkdir -p #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset}"
+				arr = sample["fastq"].split(",")
+				if arr.length == 1
+					fastq_str = "-U #{fastq_dir}/#{arr}"
+				elsif arr.length == 2
+					fastq_str = "-1 #{fastq_dir}/#{arr[0]} -2 #{fastq_dir}/#{arr[1]}"
+				else
+					puts "ERROR: invalid fastq string!"
+					exit -1
+				end
+				cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset}/accepted_hits.bam -"
+			end
 			sub_fps[(i % num_jobs)].puts(cmd)
 		}
 		i += 1
@@ -1065,12 +1110,12 @@ if analysis_type == "advanced"
 		fp.close
 	}
 	out_fp.puts "#\tOUTPUT:"
-	out_fp.puts "#\t\t#{output_saturation_dir}/tophat/*"
+	out_fp.puts "#\t\t#{output_saturation_dir}/#{aligner}/*"
 		
 	out_fp.puts "", "###\tc. Cuffquant"
 	out_fp.puts "#\tINPUT:"
 	out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
-	out_fp.puts "#\t\t#{output_saturation_dir}/tophat/*"
+	out_fp.puts "#\t\t#{output_saturation_dir}/#{aligner}/*"
 	out_fp.puts "#\tEXECUTION:"
 	out_fp.puts "mkdir -p #{output_saturation_dir}/cuffquant"
 	subset_str = saturation_subsets.join(" ")
@@ -1079,8 +1124,8 @@ if analysis_type == "advanced"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-#		out_fp.puts "\tcufflinks --output-dir #{output_dir}/#{sample_id}.sub_\$pct.cufflinks_output --num-threads #{num_tophat_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_dir}/#{sample_id}.sub_\$pct.tophat_output/accepted_hits.bam"
-		out_fp.puts "\tcuffquant --output-dir #{output_saturation_dir}/cuffquant/#{sample_id}.sub_\$pct -p #{num_tophat_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_saturation_dir}/tophat/#{sample_id}.sub_\$pct/accepted_hits.bam"
+#		out_fp.puts "\tcufflinks --output-dir #{output_dir}/#{sample_id}.sub_\$pct.cufflinks_output --num-threads #{num_alignment_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_dir}/#{sample_id}.sub_\$pct.tophat_output/accepted_hits.bam"
+		out_fp.puts "\tcuffquant --output-dir #{output_saturation_dir}/cuffquant/#{sample_id}.sub_\$pct -p #{num_alignment_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_\$pct/accepted_hits.bam"
 	}
 	out_fp.puts "done"
 	
