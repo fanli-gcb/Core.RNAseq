@@ -8,7 +8,7 @@ flag_cuffmerge = true
 flag_kallisto = false
 flag_comparison = false
 aligner = "hisat2"
-de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTseq/DESeq2, "kallisto" for kallisto/DESeq2
+de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "featureCounts" for featureCounts/DESeq2, "kallisto" for kallisto/DESeq2
 read_mismatches = 2
 read_gap_length = 2
 read_edit_dist = 2
@@ -44,9 +44,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output-cuffquant-dir"
 			output_cuffquant_dir = ARGV.shift
 			output_cuffquant_dir = output_cuffquant_dir.gsub(/\/$/, "")
-		elsif arg == "--output-htseq-dir"
-			output_htseq_dir = ARGV.shift
-			output_htseq_dir = output_htseq_dir.gsub(/\/$/, "")
+		elsif arg == "--output-featureCounts-dir"
+			output_featureCounts_dir = ARGV.shift
+			output_featureCounts_dir = output_featureCounts_dir.gsub(/\/$/, "")
 		elsif arg == "--output-code-dir"
 			output_code_dir = ARGV.shift
 			output_code_dir = output_code_dir.gsub(/\/$/, "")
@@ -143,7 +143,7 @@ end
 #		#{output_dir}/cuffmerge
 #		#{output_dir}/cuffdiff
 #		#{output_dir}/GSEA
-#		#{output_dir}/htseq
+#		#{output_dir}/featureCounts
 #		#{output_dir}/DESeq2
 #		#{output_dir}/edgeR
 if output_tophat_dir.nil?
@@ -170,8 +170,8 @@ end
 if output_gsea_dir.nil?
 	output_gsea_dir = "#{output_dir}/GSEA"
 end
-if output_htseq_dir.nil?
-	output_htseq_dir = "#{output_dir}/htseq"
+if output_featureCounts_dir.nil?
+	output_featureCounts_dir = "#{output_dir}/featureCounts"
 end
 if output_deseq2_dir.nil?
 	output_deseq2_dir = "#{output_dir}/DESeq2"
@@ -206,8 +206,8 @@ else
 		exit -1
 	end
 end
-if !(de_pipeline == "tuxedo" || de_pipeline == "htseq" || de_pipeline == "kallisto")
-	puts "ERROR: de-pipeline must be 'htseq', 'tuxedo', or 'kallisto'"
+if !(de_pipeline == "tuxedo" || de_pipeline == "featureCounts" || de_pipeline == "kallisto")
+	puts "ERROR: de-pipeline must be 'featureCounts', 'tuxedo', or 'kallisto'"
 	exit -1
 end
 if (de_pipeline == "kallisto")
@@ -341,7 +341,7 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} 2> #{output_alignment_dir}/#{sample_id}/align_summary.txt | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
@@ -715,10 +715,10 @@ if de_pipeline == "tuxedo"
 			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/report.zip"
 		}
 	end
-elsif de_pipeline == "htseq"
+elsif de_pipeline == "featureCounts"
 	out_fp.puts "","","################################################"
-	out_fp.puts "###\t2. Differential expression analysis using Tophat/HISAT2+HTSeq+DESeq2/edgeR pipeline"
-	out_fp.puts "###\ta. Count reads using HTSeq"
+	out_fp.puts "###\t2. Differential expression analysis using Tophat/HISAT2+featureCounts+DESeq2/edgeR pipeline"
+	out_fp.puts "###\ta. Count reads using featureCounts"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
@@ -727,11 +727,11 @@ elsif de_pipeline == "htseq"
 	out_fp.puts "#\tREQUIRED DATA FILES:"
 	out_fp.puts "#\t\t#{genes_gtf_file}"
 	out_fp.puts "#\tEXECUTION:"
-	out_fp.puts "mkdir -p #{output_htseq_dir}"
+	out_fp.puts "mkdir -p #{output_featureCounts_dir}"
 	sub_fps.clear
 	1.upto(num_jobs) do |i|
-		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.htseq_count.#{i}.sh", "w")
-		out_fp.puts "bash workflow.#{project}.htseq_count.#{i}.sh &> workflow.#{project}.htseq_count.#{i}.log &"
+		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.featureCounts_count.#{i}.sh", "w")
+		out_fp.puts "bash workflow.#{project}.featureCounts_count.#{i}.sh &> workflow.#{project}.featureCounts_count.#{i}.log &"
 	end
 	out_fp.puts "wait"
 	i = 0
@@ -750,7 +750,7 @@ elsif de_pipeline == "htseq"
 		end
 		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted"
 		sub_fps[(i % num_jobs)].puts cmd
-		cmd = "htseq-count -f bam -r name -s #{libtype_str} -m union #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam #{genes_gtf_file} > #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -760,12 +760,12 @@ elsif de_pipeline == "htseq"
 	out_fp.puts "#\tOUTPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
+		out_fp.puts "#\t\t#{sample_id}.featureCounts.counts.txt"
 	}
 	out_fp.puts "#\tCHECKPOINT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "[ -f \"#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt\" ] || (echo \"ERROR: #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt not found!\" && exit)"
+		out_fp.puts "[ -f \"#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt\" ] || (echo \"ERROR: #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt not found!\" && exit)"
 	}
 	
 	if flag_comparison
@@ -775,7 +775,7 @@ elsif de_pipeline == "htseq"
 		out_fp.puts "#\t\tSAMPLE_SHEET.txt"
 		samples.each { |sample|
 			sample_id = sample["sample_id"]
-			out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
+			out_fp.puts "#\t\t#{sample_id}.featureCounts.counts.txt"
 		}
 		out_fp.puts "#\tEXECUTION:"
 		comparisons.each { |comparison|
@@ -790,11 +790,11 @@ elsif de_pipeline == "htseq"
 			samples.each { |sample|
 				sample_id = sample["sample_id"]
 				if (sample[characteristic] == condA)
-					condA_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condA_files << "#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt"
 					condA_samples << sample_id
 					factors << condA
 				elsif (sample[characteristic] == condB)
-					condB_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condB_files << "#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt"
 					condB_samples << sample_id
 					factors << condB
 				end
@@ -936,226 +936,6 @@ elsif de_pipeline == "kallisto"
 			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}/results.pdf"
 		}
 	end
-end
-
-if analysis_type == "advanced" && 0 == 1
-	saturation_subsets = ["10", "20", "30", "40", "50", "60", "70", "80", "90"]
-	out_fp.puts "","","################################################"
-	out_fp.puts "###\t4. Saturation analysis"
-	out_fp.puts "###\ta. Subsample FASTQ files"
-	out_fp.puts "#\tINPUT:"
-	samples.each { |sample|
-		out = sample["fastq"].split(",")
-		out.each { |fastq|
-			out_fp.puts "#\t\t#{fastq}"
-		}
-	}
-	out_fp.puts "#\tEXECUTION:"
-	samples.each { |sample|
-		fastq_str = sample["fastq"].split(",").collect { |x| "#{output_dir}/#{x}" }.join(" ")
-		out_fp.puts "bash subsample_fastq.sh #{fastq_str}"
-	}
-	out_fp.puts "#\tOUTPUT:"
-	samples.each { |sample|
-		out = sample["fastq"].split(",")
-		out.each { |fastq|
-			saturation_subsets.each { |subset|
-				out_fp.puts "#\t\t#{fastq}.sub_#{subset}"
-			}
-		}
-	}
-	out_fp.puts "#\tCHECKPOINT:"
-	samples.each { |sample|
-		out = sample["fastq"].split(",")
-		out.each { |fastq|
-			saturation_subsets.each { |subset|
-				out_fp.puts "[ -f \"#{output_dir}/#{fastq}.sub_#{subset}\" ] || (echo \"ERROR: #{fastq}.sub_#{subset} not found!\" && exit)"
-			}
-		}
-	}
-	
-	out_fp.puts "", "###\tb. Realign subsampled reads"
-	out_fp.puts "#\tINPUT:"
-	samples.each { |sample|
-		out = sample["fastq"].split(",")
-		out.each { |fastq|
-			saturation_subsets.each { |subset|
-				out_fp.puts "#\t\t#{fastq}.sub_#{subset}"
-			}
-		}
-	}
-	out_fp.puts "#\tREQUIRED DATA FILES"
-	out_fp.puts "#\t\t*.bt2 files"
-	out_fp.puts "#\t\t#{genes_gtf_file}"
-	out_fp.puts "#\tEXECUTION:"
-	subset_str = saturation_subsets.join(" ")
-	out_fp.puts "for pct in #{subset_str}"
-	out_fp.puts "do"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		libtype = sample["library-type"]
-		fastqs = sample["fastq"].split(",")
-		if aligner == "tophat"
-			if fastqs.length == 1
-				out_fp.puts "\ttophat --read-mismatches 2 --read-gap-length 2 --read-edit-dist 2 --max-multihits 10 --num-threads #{num_tophat_threads} --output-dir #{output_dir}/#{sample_id}.sub_\$pct.tophat_output /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{output_dir}/#{fastqs[0]}.sub_\$pct"
-			elsif fastqs.length == 2
-				out_fp.puts "\ttophat --read-mismatches 2 --read-gap-length 2 --read-edit-dist 2 --max-multihits 10 --library-type #{libtype} --num-threads 6 --output-dir #{output_dir}/#{sample_id}.sub_\$pct.tophat_output /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{output_dir}/#{fastqs[0]}.sub_\$pct #{output_dir}/#{fastqs[1]}.sub_\$pct"
-			else
-				out_fp.puts "ERROR: weird number of FASTQ files for sample #{sample_id} #{fastqs}"
-				exit -1
-			end
-		elsif aligner == "hisat2"
-			if fastqs.length == 1
-				fastq_str = "-U #{fastq_dir}/#{arr}"
-			elsif fastqs.length == 2
-				fastq_str = "-1 #{fastq_dir}/#{arr[0]} -2 #{fastq_dir}/#{arr[1]}"
-			else
-				puts "ERROR: invalid fastq string!"
-				exit -1
-			end
-			puts "mkdir -p #{output_alignment_dir}/#{sample_id}.sub_\$pct.hisat2_output"
-			cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}.sub_\$pct/accepted_hits.bam -"
-		end
-	}
-	out_fp.puts "done"
-	out_fp.puts "#\tOUTPUT:"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{output_dir}/#{sample_id}.sub_#{subset}.#{aligner}_output"
-		}
-	}
-	out_fp.puts "#\tCHECKPOINT:"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "[ -f \"#{output_dir}/#{sample_id}.sub_#{subset}.#{aligner}_output/accepted_hits.bam\" ] || (echo \"ERROR: #{output_dir}/#{sample_id}.sub_#{subset}.#{aligner}_output/accepted_hits.bam not found!\" && exit)"
-		}
-	}
-	
-	out_fp.puts "", "###\tc. Cufflinks/Cuffquant/Cuffdiff"
-	out_fp.puts "#\tINPUT:"
-	out_fp.puts "#\t\t#{output_dir}/cuffmerge_output/merged.gtf"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{output_dir}/#{sample_id}.sub_#{subset}.#{aligner}_output"
-		}
-	}
-	out_fp.puts "#\tEXECUTION:"
-	subset_str = saturation_subsets.join(" ")
-	out_fp.puts "for pct in #{subset_str}"
-	out_fp.puts "do"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		libtype = sample["library-type"]
-		out_fp.puts "\tcufflinks --output-dir #{output_dir}/#{sample_id}.sub_\$pct.cufflinks_output --num-threads #{num_alignment_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_dir}/#{sample_id}.sub_\$pct.#{aligner}_output/accepted_hits.bam"
-		out_fp.puts "\tcuffquant --output-dir #{output_dir}/#{sample_id}.sub_\$pct.cuffquant_output -p #{num_alignment_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_dir}/cuffmerge_output/merged.gtf #{output_dir}/#{sample_id}.sub_\$pct.#{aligner}_output/accepted_hits.bam"
-	}
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		cxb_condA = Array.new
-		cxb_condB = Array.new
-		samples.each { |sample|
-			sample_id = sample["sample_id"]
-			if (sample[characteristic] == condA)
-				cxb_condA << "#{output_dir}/#{sample_id}.sub_\$pct.cuffquant_output/abundances.cxb"
-			elsif (sample[characteristic] == condB)
-				cxb_condB << "#{output_dir}/#{sample_id}.sub_\$pct.cuffquant_output/abundances.cxb"
-			end
-		}
-		outA = cxb_condA.join(",")
-		outB = cxb_condB.join(",")
-		out_fp.puts "cuffdiff --output-dir #{output_dir}/#{characteristic}-#{condA}-#{condB}.sub_\$pct.cuffdiff_output --labels #{condA},#{condB} -p #{num_alignment_threads} --compatible-hits-norm --multi-read-correct --library-norm-method geometric --dispersion-method pooled --quiet --no-update-check #{output_dir}/cuffmerge_output/merged.gtf #{outA} #{outB}"
-	}
-	out_fp.puts "done"
-	out_fp.puts "#\tOUTPUT:"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{sample_id}.sub_#{subset}.cufflinks_output/"
-			out_fp.puts "#\t\t#{sample_id}.sub_#{subset}.cuffquant_output/"
-		}
-	}
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.sub_#{subset}.cuffdiff_output/"
-		}
-	}
-	out_fp.puts "#\tCHECKPOINT:"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "[ -f \"#{output_dir}/#{sample_id}.sub_#{subset}.cufflinks_output/genes.fpkm_tracking\" ] || (echo \"ERROR: #{output_dir}/#{sample_id}.sub_#{subset}.cufflinks_output/genes.fpkm_tracking not found!\" && exit)"
-			out_fp.puts "[ -f \"#{output_dir}/#{sample_id}.sub_#{subset}.cuffquant_output/abundances.cxb\" ] || (echo \"ERROR: #{output_dir}/#{sample_id}.sub_#{subset}.cuffquant_output/abundances.cxb not found!\" && exit)"
-		}
-	}
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "[ -f \"#{output_dir}/#{characteristic}-#{condA}-#{condB}.sub_#{subset}.cuffdiff_output/gene_exp.diff\" ] || (echo \"ERROR: #{output_dir}/#{characteristic}-#{condA}-#{condB}.sub_#{subset}.cuffdiff_output/gene_exp.diff not found!\" && exit)"
-		}
-	}
-	
-	out_fp.puts "", "###\td. Compute saturation numbers and draw figures"
-	out_fp.puts "#\tINPUT:"
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}.cufflinks_output"
-	}
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.cuffdiff_output/"
-	}
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{sample_id}.sub_#{subset}.cufflinks_output/"
-		}
-	}
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		saturation_subsets.each { |subset|
-			out_fp.puts "#\t\t#{characteristic}-#{condA}-#{condB}.sub_#{subset}.cuffdiff_output/"
-		}
-	}
-	out_fp.puts "#\tEXECUTION:"
-	prefix_arr = Array.new
-	full_file_arr = Array.new
-	samples.each { |sample|
-		sample_id = sample["sample_id"]
-		prefix_arr << "#{output_dir}/#{sample_id}"
-		full_file_arr << "#{output_dir}/#{sample_id}.cufflinks_output/genes.fpkm_tracking"
-	}
-	prefix_str = prefix_arr.join(",")
-	full_file_str = full_file_arr.join(",")
-	out_fp.puts "./saturation_analysis.R #{prefix_str} #{full_file_str} #{output_dir}/saturation_analysis.pdf"
-	prefix_arr = Array.new
-	full_file_arr = Array.new
-	comparisons.each { |comparison|
-		characteristic = comparison["characteristic"]
-		condA = comparison["condition_A"]
-		condB = comparison["condition_B"]
-		prefix_arr << "#{output_dir}/#{characteristic}-#{condA}-#{condB}"
-		full_file_arr << "#{output_dir}/#{characteristic}-#{condA}-#{condB}.cuffdiff_output/gene_exp.diff"
-	}
-	prefix_str = prefix_arr.join(",")
-	full_file_str = full_file_arr.join(",")
-	out_fp.puts "./saturation_analysis_DE.R #{prefix_str} #{full_file_str} #{output_dir}/saturation_analysis_DE.pdf"
-	out_fp.puts "#\tOUTPUT:"
-	out_fp.puts "#\t\tsaturation_analysis.pdf"
-	out_fp.puts "#\t\tsaturation_analysis_DE.pdf"
 end
 
 

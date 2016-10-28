@@ -9,7 +9,7 @@ flag_kallisto = false
 flag_cuffmerge = true
 flag_qualitytrim = true # changed to true by default
 aligner = "hisat2" # use HISAT2 aligner by default, tophat2 as an option
-de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "htseq" for HTSeq/scde, "kallisto" for kallisto+monocle
+de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "featureCounts" for featureCounts/scde, "kallisto" for kallisto+monocle
 read_mismatches = 2
 read_gap_length = 2
 read_edit_dist = 2
@@ -34,7 +34,7 @@ if (ARGV.size >= 6)
 			output_tophat_dir = output_tophat_dir.gsub(/\/$/, "")
 		elsif arg == "--output-hisat2-dir"
 			output_hisat2_dir = ARGV.shift
-			output_tophisat2_dir = output_hisat2_dir.gsub(/\/$/, "")
+			output_hisat2_dir = output_hisat2_dir.gsub(/\/$/, "")
 		elsif arg == "--output-QC-dir"
 			output_QC_dir = ARGV.shift
 			output_QC_dir = output_QC_dir.gsub(/\/$/, "")
@@ -44,9 +44,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output-cuffquant-dir"
 			output_cuffquant_dir = ARGV.shift
 			output_cuffquant_dir = output_cuffquant_dir.gsub(/\/$/, "")
-		elsif arg == "--output-htseq-dir"
-			output_htseq_dir = ARGV.shift
-			output_htseq_dir = output_htseq_dir.gsub(/\/$/, "")
+		elsif arg == "--output-featureCounts-dir"
+			output_featureCounts_dir = ARGV.shift
+			output_featureCounts_dir = output_featureCounts_dir.gsub(/\/$/, "")
 		elsif arg == "--output-deseq-dir"
 			output_deseq_dir = ARGV.shift
 			output_deseq_dir = output_deseq_dir.gsub(/\/$/, "")
@@ -131,7 +131,7 @@ end
 #		#{output_dir}/QC
 #		#{output_dir}/cuffquant
 #		#{output_dir}/cuffmerge
-#		#{output_dir}/htseq
+#		#{output_dir}/featureCounts
 #		#{output_dir}/DESeq2
 if output_tophat_dir.nil?
 	output_tophat_dir = "#{output_dir}/tophat"
@@ -151,8 +151,8 @@ end
 if output_cuffmerge_dir.nil?
 	output_cuffmerge_dir = "#{output_dir}/cuffmerge"
 end
-if output_htseq_dir.nil?
-	output_htseq_dir = "#{output_dir}/htseq"
+if output_featureCounts_dir.nil?
+	output_featureCounts_dir = "#{output_dir}/featureCounts"
 end
 if output_deseq_dir.nil?
 	output_deseq_dir = "#{output_dir}/DESeq2"
@@ -187,8 +187,8 @@ else
 		exit -1
 	end
 end
-if !(de_pipeline == "tuxedo" || de_pipeline == "htseq" || de_pipeline == "kallisto")
-	puts "ERROR: de-pipeline must be 'htseq', 'kallisto', or 'tuxedo'"
+if !(de_pipeline == "tuxedo" || de_pipeline == "featureCounts" || de_pipeline == "kallisto")
+	puts "ERROR: de-pipeline must be 'featureCounts', 'kallisto', or 'tuxedo'"
 	exit -1
 end
 if (aligner == "tophat")
@@ -362,7 +362,7 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} 2> #{output_alignment_dir}/#{sample_id}/align_summary.txt | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
@@ -863,10 +863,10 @@ if de_pipeline == "tuxedo"
 			}
 		end
 	end
-elsif de_pipeline == "htseq"
+elsif de_pipeline == "featureCounts"
 	out_fp.puts "","","################################################"
-	out_fp.puts "###\t2. Differential expression analysis using HT-Seq/scde pipeline"
-	out_fp.puts "###\ta. Count reads using HT-Seq"
+	out_fp.puts "###\t2. Differential expression analysis using featureCounts/scde pipeline"
+	out_fp.puts "###\ta. Count reads using featureCounts"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
@@ -876,10 +876,10 @@ elsif de_pipeline == "htseq"
 	out_fp.puts "#\t\t#{genes_gtf_file}"
 	out_fp.puts "#\tEXECUTION:"
 	sub_fps.clear
-	out_fp.puts "mkdir -p #{output_htseq_dir}"
+	out_fp.puts "mkdir -p #{output_featureCounts_dir}"
 	1.upto(num_jobs) do |i|
-		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.htseq_count.#{i}.sh", "w")
-		out_fp.puts "bash workflow.#{project}.htseq_count.#{i}.sh &> workflow.#{project}.htseq_count.#{i}.log &"
+		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.featureCounts_count.#{i}.sh", "w")
+		out_fp.puts "bash workflow.#{project}.featureCounts_count.#{i}.sh &> workflow.#{project}.featureCounts_count.#{i}.log &"
 	end
 	out_fp.puts "wait"
 	i = 0
@@ -887,18 +887,18 @@ elsif de_pipeline == "htseq"
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
 		if libtype == "fr-unstranded"
-			libtype_str = "no"
+			libtype_str = "0"
 		elsif libtype == "fr-firststrand"
-			libtype_str = "reverse"
+			libtype_str = "2"
 		elsif libtype == "fr-secondstrand"
-			libtype_str = "yes"
+			libtype_str = "1"
 		else
 			puts "ERROR: invalid library-type #{libtype}"
 			exit -1
 		end
 		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted"
 		sub_fps[(i % num_jobs)].puts cmd
-		cmd = "htseq-count -f bam -r name -s #{libtype_str} -m union #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam #{genes_gtf_file} > #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -908,12 +908,12 @@ elsif de_pipeline == "htseq"
 	out_fp.puts "#\tOUTPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
+		out_fp.puts "#\t\t#{sample_id}.featureCounts.counts.txt"
 	}
 	out_fp.puts "#\tCHECKPOINT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "[ -f \"#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt\" ] || (echo \"ERROR: #{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt not found!\" && exit)"
+		out_fp.puts "[ -f \"#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt\" ] || (echo \"ERROR: #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt not found!\" && exit)"
 	}
 	
 	if flag_comparison
@@ -923,7 +923,7 @@ elsif de_pipeline == "htseq"
 		out_fp.puts "#\t\t#{sample_sheet_fn}"
 		samples.each { |sample|
 			sample_id = sample["sample_id"]
-			out_fp.puts "#\t\t#{sample_id}.HTSeq.counts.txt"
+			out_fp.puts "#\t\t#{sample_id}.featureCounts.counts.txt"
 		}
 		out_fp.puts "#\tEXECUTION:"
 		comparisons.each { |comparison|
@@ -938,11 +938,11 @@ elsif de_pipeline == "htseq"
 			samples.each { |sample|
 				sample_id = sample["sample_id"]
 				if (sample[characteristic] == condA)
-					condA_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condA_files << "#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt"
 					condA_samples << sample_id
 					factors << condA
 				elsif (sample[characteristic] == condB)
-					condB_files << "#{output_htseq_dir}/#{sample_id}.HTSeq.counts.txt"
+					condB_files << "#{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt"
 					condB_samples << sample_id
 					factors << condB
 				end
@@ -1100,7 +1100,7 @@ if analysis_type == "advanced"
 					puts "ERROR: invalid fastq string!"
 					exit -1
 				end
-				cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} | samtools view -bS -o #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset}/accepted_hits.bam -"
+				cmd = "hisat2 --num-threads #{num_alignment_threads} -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome #{fastq_str} 2> #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset}/align_summary.txt | samtools view -bS -o #{output_saturation_dir}/#{aligner}/#{sample_id}.sub_#{saturation_subset}/accepted_hits.bam -"
 			end
 			sub_fps[(i % num_jobs)].puts(cmd)
 		}
