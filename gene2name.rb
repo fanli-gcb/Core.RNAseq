@@ -7,6 +7,7 @@ fn = ARGV.shift
 
 transcripts = Hash.new
 File.open(fn).each_line do |line|
+	next if line.chomp =~ /^#/
 	chrom, source, type, start, stop, s1, strand, s2, comments = line.chomp.split(/\t/)
 	if comments =~ /gene_id \"(\S+)\";/
 		gene_id = $1

@@ -4,78 +4,92 @@ library(methods)
 library("DESeq2")
 library("gplots")
 library("RColorBrewer")
-library("ggplot2")
-library("pheatmap")
+library("reshape2")
 
-args <- commandArgs(T)
-if (length(args) < 6) {
-	cat("USAGE: ./run_DESeq2.R counts_file factors_file out_txt out_up_txt out_down_txt out_pdf\n")
-	q()
+plotPCAWithSampleNames = function (x, intgroup = "condition", ntop = 500, returnData = FALSE, select = NULL) 
+{
+	library("RColorBrewer")
+	library("genefilter")
+	library("ggplot2")
+	rv <- rowVars(assay(x))
+	if (is.null(select)) {
+		select <- order(rv, decreasing = TRUE)[seq_len(min(ntop, length(rv)))]
+	}
+	pca <- prcomp(t(assay(x)[select, ]))
+	percentVar <- pca$sdev^2/sum(pca$sdev^2)
+	if (!all(intgroup %in% names(colData(x)))) {
+	  stop("the argument 'intgroup' should specify columns of colData(dds)")
+	}
+	intgroup.df <- as.data.frame(colData(x)[, intgroup, drop = FALSE])
+	group <- factor(apply(intgroup.df, 1, paste, collapse = " : "))
+	d <- data.frame(PC1 = pca$x[, 1], PC2 = pca$x[, 2], group = group, intgroup.df, names = colnames(x))
+	if (returnData) {
+	  attr(d, "percentVar") <- percentVar[1:2]
+	  return(d)
+	}
+	ggplot(data = d, aes_string(x = "PC1", y = "PC2", color = "group", label = "names")) + geom_point(size = 3) + xlab(paste0("PC1: ", round(percentVar[1] * 100), "% variance")) + ylab(paste0("PC2: ", round(percentVar[2] * 100), "% variance")) + geom_text(size=3, hjust=0, vjust=0)
 }
 
-counts_file <- args[1]
-factors_file <- args[2]
-out_txt <- args[3]
-out_up_txt <- args[4]
-out_down_txt <- args[5]
-out_pdf <- args[6]
+getPCALoadings = function (x,  ntop = 500, plottop=20, PC=1, select = NULL) 
+{
+	library("RColorBrewer")
+	library("genefilter")
+	library("ggplot2")
+	rv <- rowVars(assay(x))
+	if (is.null(select)) {
+		select <- order(rv, decreasing = TRUE)[seq_len(min(ntop, length(rv)))]
+	}
+	pca <- prcomp(t(assay(x)[select, ]))
+	d <- pca$rotation[,PC]; d <- d[order(abs(d), decreasing=T)]
+	d <- d[1:plottop]
+	return(d)
+}
 
-# read in data
-counts <- read.table(counts_file, header=T, sep="\t", row.names=1)
-rows_to_keep <- setdiff(rownames(counts), rownames(counts)[grep("^__", rownames(counts))])
-counts <- counts[rows_to_keep,]
-counts <- round(counts)
-condition <- factor(scan(factors_file, what="c", sep=","))
+mapping_fn <- "/Lab_Share/${PROJECT}/SAMPLE_SHEET.txt"
+counts_dir <- "/Lab_Share/${PROJECT}/featureCounts"
+out_pdf <- "/Lab_Share/${PROJECT}/DESeq2/DESeq2_results.pdf"
 
-########################################################################################
+# read in data - featureCounts
+mapping <- read.table(mapping_fn, header=T, as.is=T, sep="\t", row.names=1)
+counts <- {}
+for (sid in rownames(mapping)) {
+	fn <- sprintf("%s/%s.featureCounts.counts.txt", counts_dir, sid)
+	tmp <- read.table(fn, header=T, as.is=T, sep="\t", row.names=1)
+	counts <- cbind(counts, tmp[,6])
+}
+gene_names <- rownames(tmp)
+rownames(counts) <- gene_names
+colnames(counts) <- rownames(mapping)
+counts <- as.data.frame(counts)
+
+# map to gene names
+gene2name <- read.table("/Lab_Share/Ensembl/GRCh38.p7-85/genes2names.txt", header=F, as.is=T, sep="\t", row.names=1)
+counts$gene_name <- gene2name[rownames(counts), "V2"]
+counts <- aggregate(.~gene_name, counts, sum)
+rownames(counts) <- counts$gene_name
+counts <- counts[,-1]
+
+# filter out genes w/ < 10 reads total
+inds <- rowSums(counts) > 10
+counts <- counts[inds,]
+
+set.seed(sum(dim(counts)))
+
 pdf(out_pdf, title="DESeq2 plots")
 
-dds <- DESeqDataSetFromMatrix(countData=counts, colData=data.frame(condition, row.names=colnames(counts)), design= ~condition)
-colData(dds)$condition <- factor(colData(dds)$condition, levels=levels(condition))
-dds <- DESeq(dds)
-res <- results(dds)
-res <- res[order(res$padj),]
-resSig <- subset(res, padj<0.05)
-resSig.up <- subset(resSig, log2FoldChange>0)
-resSig.down <- subset(resSig, log2FoldChange<0)
+###########################################################################################
+## overall PCA and diagnostic plots
+dds <- DESeqDataSetFromMatrix(countData=counts, colData=mapping, design= ~Condition + CellLine)
+dds <- DESeq(dds, parallel=T)
 
-write.table(as.data.frame(resSig), file=out_txt, quote=F, sep="\t")
-write.table(rownames(resSig.up), file=out_up_txt, quote=F, sep="\t", row.names=F, col.names=F)
-write.table(rownames(resSig.down), file=out_down_txt, quote=F, sep="\t", row.names=F, col.names=F)
-
-
-# diagnostic plots
-plotDispEsts(dds)
-DESeq2::plotMA(res, main="DESeq2 MA plot")
-
+# k-means clustering
 vsd = varianceStabilizingTransformation( dds, blind=TRUE )
-
-# sampled gene clustering
-select = rownames(resSig)
-hmcol = colorRampPalette(brewer.pal(9, "GnBu"))(100)
-heatmap.2(assay(vsd)[select,], Colv=F, dendrogram="row", col = hmcol, trace="none", margin=c(10, 6))
-
-df <- as.data.frame(colData(dds)[,c("condition")]); colnames(df) <- "condition"
-# all sighits
-select = rownames(resSig)
-pheatmap(assay(vsd)[select,], cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="All sighits")
-tmp <- assay(vsd)[select,]; tmp <- t(apply(tmp, 1, function(x) (x-mean(x))/sd(x)))
-pheatmap(tmp, cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="all sighits (Z-transformed)")
-# down
-select = rownames(resSig.up)
-pheatmap(assay(vsd)[select,], cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="Down sighits")
-tmp <- assay(vsd)[select,]; tmp <- t(apply(tmp, 1, function(x) (x-mean(x))/sd(x)))
-pheatmap(tmp, cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="Down sighits (Z-transformed)")
-# up
-select = rownames(resSig.down)
-pheatmap(assay(vsd)[select,], cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="Up sighits")
-tmp <- assay(vsd)[select,]; tmp <- t(apply(tmp, 1, function(x) (x-mean(x))/sd(x)))
-pheatmap(tmp, cluster_rows=T, show_rownames=F, cluster_cols=FALSE, main="Up sighits (Z-transformed)")
-
+out <- as.data.frame(assay(vsd))
 
 # heatmap of sample-to-sample distances
 dists = dist( t( assay(vsd) ) )
 mat = as.matrix( dists )
+hmcol = colorRampPalette(brewer.pal(9, "GnBu"))(100)
 #rownames(mat) = colnames(mat) = with(pData(ddsBlind), paste(condition, libType, sep=" : "))
 heatmap.2(mat, trace="none", col = rev(hmcol), margin=c(13, 13))
 
@@ -86,8 +100,30 @@ colors2 <- colorRampPalette(c("white","darkblue"))(150)
 heatmap.2(correlation, col=colors2, scale="none", trace="none", main="correlation between samples", cellnote=corrstr, notecex=0.4, notecol="black")
 
 # PCA
-plotPCA(vsd, intgroup="condition") + geom_text(aes(label = name), size = 1.5, col="black", hjust=0, vjust=1)
+plotPCAWithSampleNames(vsd, intgroup="Condition")
+plotPCA(vsd, intgroup="Condition")
+plotPCAWithSampleNames(vsd, intgroup="CellLine")
+plotPCA(vsd, intgroup="CellLine")
+for (princ in c(1,2)) {
+	d <- getPCALoadings(vsd, PC=princ)
+	d <- data.frame(gene=names(d), loading=d)
+	d <- d[order(d$loading),]
+	d$gene <- factor(as.character(d$gene), levels=as.character(d$gene))
+	p <- ggplot(d, aes(x=gene, y=loading)) + geom_bar(stat="identity") + scale_fill_manual(values="blue") + coord_flip() + theme_classic() + ggtitle(sprintf("PC %d", princ))
+	print(p)
+}
+
+# differential analysis: by Condition
+res <- results(dds, contrast=c("Condition", "Disease", "Control"))
+res <- res[order(res$padj),]
+res$gene_symbol <- gene_to_name[rownames(res), "Name"]
+resSig <- subset(res, padj<0.05)
+write.table(res, file="/Lab_Share/${PROJECT}/DESeq2/DESeq_results.Condition.txt", quote=F, sep="\t", row.names=T, col.names=T)
+
 
 dev.off()
+
+
+
 
 

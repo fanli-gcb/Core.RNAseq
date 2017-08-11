@@ -47,9 +47,9 @@ fp.puts "Chemistry,#{out}"
 
 fp.puts ""
 fp.puts "[Reads]"
-out = prompt("4", "Reads(1) [default=76]:")
+out = prompt("76", "Reads(1) [default=76]:")
 fp.puts "#{out}"
-out = prompt("4", "Reads(2) [default=76]:")
+out = prompt("76", "Reads(2) [default=76]:")
 fp.puts "#{out}"
 
 fp.puts ""

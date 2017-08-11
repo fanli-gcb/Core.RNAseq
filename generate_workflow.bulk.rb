@@ -7,7 +7,9 @@ flag_transcriptomeOnly = false
 flag_cuffmerge = true
 flag_kallisto = false
 flag_comparison = false
-aligner = "hisat2"
+flag_qualitytrim = true # changed to true by default
+flag_variants = false
+aligner = "hisat2" # use HISAT2 aligner by default, tophat2 as an option
 de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "featureCounts" for featureCounts/DESeq2, "kallisto" for kallisto/DESeq2
 read_mismatches = 2
 read_gap_length = 2
@@ -68,6 +70,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output_kallisto_dir"
 			output_kallisto_dir = ARGV.shift
 			output_kallisto_dir = output_kallisto_dir.gsub(/\/$/, "")
+		elsif arg == "--output_variant_dir"
+			output_variant_dir = ARGV.shift
+			output_variant_dir = output_variant_dir.gsub(/\/$/, "")
 		elsif arg == "--fastq-dir"
 			fastq_dir = ARGV.shift
 			fastq_dir = fastq_dir.gsub(/\/$/, "")
@@ -109,15 +114,19 @@ if (ARGV.size >= 6)
 			kallisto_index_file = ARGV.shift
 		elsif arg == "--transcript-to-gene-file"
 			transcript_to_gene_file = ARGV.shift
+		elsif arg == "--dont-quality-trim"
+			flag_qualitytrim = false
 		elsif arg == "--aligner"
 			aligner = ARGV.shift
+		elsif arg == "--do-variant-calling"
+			flag_variants = true
 		else
 			puts "ERROR: Unrecognized option #{arg}"
 			exit -1
 		end
 	end	
 else
-	puts "USAGE: #{$0} -s sample_sheet_file -c comparison_file -g hg19|mm10 --output-code-dir output_code_dir -o output_dir -a analysis_type -p project [--transcriptome-only] [--num-jobs num_jobs] [--num-tophat-threads num_tophat_threads] [--de-pipeline de_pipeline] [--genes-gtf genes_gtf_file]"
+	puts "USAGE: #{$0} -s sample_sheet_file -c comparison_file -g hg38|mm10 --output-code-dir output_code_dir -o output_dir -a analysis_type -p project [--transcriptome-only] [--num-jobs num_jobs] [--num-tophat-threads num_tophat_threads] [--de-pipeline de_pipeline] [--genes-gtf genes_gtf_file]"
 	exit -1
 end
 
@@ -146,6 +155,7 @@ end
 #		#{output_dir}/featureCounts
 #		#{output_dir}/DESeq2
 #		#{output_dir}/edgeR
+#		#{output_dir}/VariantCalling
 if output_tophat_dir.nil?
 	output_tophat_dir = "#{output_dir}/tophat"
 end
@@ -182,6 +192,9 @@ end
 if output_kallisto_dir.nil?
 	output_kallisto_dir = "#{output_dir}/kallisto"
 end
+if output_variant_dir.nil?
+	output_variant_dir = "#{output_dir}/VariantCalling"
+end
 if fastq_dir.nil?
 	fastq_dir = output_dir
 end
@@ -201,8 +214,8 @@ if genome.nil?
 	puts "ERROR: genome must be specified"
 	exit -1
 else
-	if !(genome == "hg19" || genome == "GRCh38" || genome == "mm10")
-		puts "ERROR: genome must be 'hg19', 'GRCh38', or 'mm10'"
+	if !(genome == "hg38" || genome == "GRCh38" || genome == "mm10")
+		puts "ERROR: genome must be 'hg38', 'GRCh38', or 'mm10'"
 		exit -1
 	end
 end
@@ -257,8 +270,13 @@ File.open(sample_sheet_fn).each_line do |line|
 		0.upto(sample_header.length-1) do |i|
 			this[sample_header[i]] = arr[i]
 		end
+		# add paired info
+		this["paired"] = this["fastq"].split(",").length == 2 ? "yes" : "no"
 		samples << this
 	end
+	
+
+	
 end
 # read in comparison sheet
 if flag_comparison
@@ -302,6 +320,68 @@ if preprocess_fastq
 	out_fp.puts "", ""
 end
 
+if flag_qualitytrim
+	out_fp.puts "################################################"
+	out_fp.puts "###\t0. Quality trimming"
+	out_fp.puts "#\tINPUT:"
+	samples.each { |sample|
+		out = sample["fastq"].split(",")
+		out.each { |fastq|
+			out_fp.puts "#\t\t#{fastq}"
+		}
+	}
+	out_fp.puts "#\tEXECUTION:"
+	out_fp.puts "mkdir -p #{output_QC_dir}"
+	sub_fps.clear
+	1.upto(num_jobs) do |i|
+		sub_fps << File.new("#{output_code_dir}/workflow.#{project}.trim.#{i}.sh", "w")
+		out_fp.puts "bash workflow.#{project}.trim.#{i}.sh &> workflow.#{project}.trim.#{i}.log &"
+	end
+	out_fp.puts "wait"
+	i = 0
+	samples.each { |sample|
+		sample_id = sample["sample_id"]
+		libtype = sample["library-type"]
+		fastq_str = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }.join(" ")
+		paired_flag = sample["paired"]
+		paired_str = sample["paired"] == "yes" ? "--paired" : ""
+		out_files = sample["fastq"].gsub(".fastq.gz", "").gsub(".fastq", "") # only the basename
+		out_str = out_files.split(",").collect { |x| "#{fastq_dir}/#{x}.trimmed.fastq.gz #{fastq_dir}/#{x}.unpaired.fastq.gz" }.join(" ")
+#		cmd = "java -jar /mnt/Trimmomatic-0.33/trimmomatic-0.33.jar PE -threads #{num_alignment_threads} -phred33 #{fastq_str} #{out_str} LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 2>> #{fastq_dir}/trim.log"
+		cmd = "trim_galore --fastqc_args \"--outdir=#{fastq_dir}\" --stringency 1 --output_dir #{fastq_dir} #{paired_str} #{fastq_str}"
+		sub_fps[(i % num_jobs)].puts(cmd)
+		i += 1
+		j = 1
+		sample["fastq"].split(",").each { |fastq_str|
+			sample_name = fastq_str.gsub(".fastq.gz", "").gsub(".fastq","")
+			if (File.extname(fastq_str)==".gz")
+				extstr = "fq.gz"
+				extstr2 = "fastq.gz"
+			else
+				extstr = "fq"
+				extstr2 = "fastq"
+			end
+			
+			if paired_flag == "yes"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_val_#{j}.#{extstr} #{fastq_dir}/#{sample_name}.trimmed.#{extstr2}"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}.#{extstr2}_trimming_report.txt #{output_QC_dir}/#{sample_name}.#{extstr2}_trimming_report.txt"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_val_#{j}_fastqc.zip #{output_QC_dir}/#{sample_name}_val_#{j}_fastqc.zip"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_val_#{j}_fastqc.html #{output_QC_dir}/#{sample_name}_val_#{j}_fastqc.html"
+			else
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_trimmed.#{extstr} #{fastq_dir}/#{sample_name}.trimmed.#{extstr2}"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}.#{extstr2}_trimming_report.txt #{output_QC_dir}/#{sample_name}.#{extstr2}_trimming_report.txt"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_trimmed_fastqc.zip #{output_QC_dir}/#{sample_name}_trimmed_fastqc.zip"
+				out_fp.puts "mv #{fastq_dir}/#{sample_name}_trimmed_fastqc.html #{output_QC_dir}/#{sample_name}_trimmed_fastqc.html"
+			end
+			j += 1
+		}
+		sample["fastq"] = sample["fastq"].gsub(".fastq", ".trimmed.fastq")
+	}
+	sub_fps.each { |fp|
+		fp.close
+	}
+end
+
 out_fp.puts "################################################"
 out_fp.puts "###\t1. Alignment and QC metrics"
 out_fp.puts "###\ta. Run #{aligner}"
@@ -334,7 +414,7 @@ samples.each { |sample|
 		sub_fps[(i % num_jobs)].puts("mkdir -p #{output_alignment_dir}/#{sample_id}")
 		arr = sample["fastq"].split(",")
 		if arr.length == 1
-			fastq_str = "-U #{fastq_dir}/#{arr}"
+			fastq_str = "-U #{fastq_dir}/#{arr[0]}"
 		elsif arr.length == 2
 			fastq_str = "-1 #{fastq_dir}/#{arr[0]} -2 #{fastq_dir}/#{arr[1]}"
 		else
@@ -739,16 +819,16 @@ elsif de_pipeline == "featureCounts"
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
 		if libtype == "fr-unstranded"
-			libtype_str = "no"
+			libtype_str = "0"
 		elsif libtype == "fr-firststrand"
-			libtype_str = "reverse"
+			libtype_str = "2"
 		elsif libtype == "fr-secondstrand"
-			libtype_str = "yes"
+			libtype_str = "1"
 		else
 			puts "ERROR: invalid library-type #{libtype}"
 			exit -1
 		end
-		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted"
+		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -o #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
@@ -938,6 +1018,44 @@ elsif de_pipeline == "kallisto"
 	end
 end
 
-
+if flag_variants
+	out_fp.puts "","","################################################"
+	out_fp.puts "###\t3. Variant calling using GATk Best Practices for RNA-seq"
+	out_fp.puts "###\ta. Generate bash script for each sample, master script to run all jobs in parallel"
+	out_fp.puts "#\tINPUT:"
+	samples.each { |sample|
+		sample_id = sample["sample_id"]
+		out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
+	}
+	out_fp.puts "#\tEXECUTION:"
+	out_fp.puts "mkdir -p #{output_variant_dir}"
+	master_fp = File.new("#{output_code_dir}/workflow.#{project}.GATK.sh", "w")
+	
+	# write a shell script for each sample
+	samples.each { |sample|
+		sample_id = sample["sample_id"]
+		fp = File.new("#{output_code_dir}/workflow.#{project}.GATK.#{sample_id}.sh", "w")		
+		fp.puts "PICARDPATH=/share/picard"
+		fp.puts "GATKPATH=/share/GATK-3.7"
+		fp.puts ""
+		fp.puts "java -jar $PICARDPATH/picard.jar AddOrReplaceReadGroups I=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam O=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.bam SO=coordinate RGID=#{sample_id} RGLB=#{sample_id} RGPL=ILLUMINA RGPU=#{sample_id} RGSM=#{sample_id}"
+		fp.puts "java -jar $PICARDPATH/picard.jar MarkDuplicates I=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.bam O=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.bam CREATE_INDEX=true VALIDATION_STRINGENCY=SILENT M=#{output_variant_dir}/MarkDuplicates.#{sample_id}.metrics"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SplitNCigarReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.bam -o #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -rf ReassignOneMappingQuality -RMQF 255 -RMQT 60 -U ALLOW_N_CIGAR_READS"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -o #{output_variant_dir}/recal_data.#{sample_id}.table"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_variant_dir}/post_recal_data.#{sample_id}.table"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T AnalyzeCovariates -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -L 20 -before #{output_variant_dir}/recal_data.#{sample_id}.table -after #{output_variant_dir}/post_recal_data.#{sample_id}.table -plots #{output_variant_dir}/recalibration_plots.#{sample_id}.pdf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T PrintReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_alignment_dir}/#{sample_id}/accepted_hits.merged.rg.dedupped.split.recal.bam"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T HaplotypeCaller -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.merged.rg.dedupped.split.recal.bam -dontUseSoftClippedBases -stand_call_conf 10.0 -o #{output_variant_dir}/#{sample_id}.vcf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T VariantFiltration -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.vcf -window 35 -cluster 3 -filterName FS -filter \"FS > 30.0\" -filterName QD -filter \"QD < 2.0\" -o #{output_variant_dir}/#{sample_id}.filtered.vcf"
+		
+		fp.close
+		# issue command to run sample-specific shell script
+		master_fp.puts("bash #{output_code_dir}/workflow.#{project}.GATK.#{sample_id}.sh")
+	}
+	master_fp.close
+	# run master shell script using bash parallel
+	out_fp.puts("parallel -j #{num_jobs} -a workflow.#{project}.GATK.sh")
+	
+end
 
 

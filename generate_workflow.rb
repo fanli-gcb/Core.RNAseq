@@ -896,7 +896,7 @@ elsif de_pipeline == "featureCounts"
 			puts "ERROR: invalid library-type #{libtype}"
 			exit -1
 		end
-		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted"
+		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -o #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
