@@ -304,8 +304,8 @@ sub_fps = Array.new
 out_fp.puts "### #{analysis_type} RNA-seq analysis for #{project} ###"
 out_fp.puts "###"
 out_fp.puts "#\truby generate_workflow.bulk.rb #{full_command}"
-out_fp.puts "export PICARDPATH=/usr/local/picard-tools-1.118"
-out_fp.puts "export GSEAPATH=/usr/local/GSEA"
+out_fp.puts "export PICARDPATH=/share/picard"
+out_fp.puts "export GSEAPATH=/share/GSEA"
 
 if preprocess_fastq
 	out_fp.puts "################################################"
@@ -421,7 +421,7 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} 2> #{output_alignment_dir}/#{sample_id}/align_summary.txt | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
@@ -438,7 +438,7 @@ samples.each { |sample|
 out_fp.puts "#\tCHECKPOINT:"
 samples.each { |sample|
   sample_id = sample["sample_id"]
-	out_fp.puts "[ -f \"#{output_alignment_dir}/#{sample_id}/accepted_hits.bam\" ] || (echo \"ERROR: #{output_alignment_dir}/#{sample_id}/accepted_hits.bam not found!\" && exit)"
+	out_fp.puts "[ -f \"#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam\" ] || (echo \"ERROR: #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam not found!\" && exit)"
 }
 
 out_fp.puts "", "###\tb. Library-level QC metrics"
@@ -463,13 +463,13 @@ samples.each { |sample|
 	sample_id = sample["sample_id"]
 	out = "#{output_QC_dir}/#{sample_id}.unaligned.bam"
 	if (fastqs.length==1)
-		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/FastqToSam.jar FASTQ=#{fastqs[0]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
+		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar FastqToSam FASTQ=#{fastqs[0]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
 	else
-		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/FastqToSam.jar FASTQ=#{fastqs[0]} FASTQ2=#{fastqs[1]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
+		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar FastqToSam FASTQ=#{fastqs[0]} FASTQ2=#{fastqs[1]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/QualityScoreDistribution.jar INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.pdf"
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/MeanQualityByCycle.jar INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.pdf"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar QualityScoreDistribution INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.pdf"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar MeanQualityByCycle INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.pdf"
 	i += 1
 }
 
@@ -487,13 +487,13 @@ out_fp.puts "", "###\tc. Insert size metrics"
 out_fp.puts "#\tINPUT:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
-	out_fp.puts "#\t\t#{sample_id}/accepted_hits.bam"
+	out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
 }
 out_fp.puts "#\tEXECUTION:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectInsertSizeMetrics.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.txt HISTOGRAM_FILE=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.pdf"
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/EstimateLibraryComplexity.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.EstimatedLibraryComplexity.txt"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar CollectInsertSizeMetrics INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.txt HISTOGRAM_FILE=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.pdf"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar EstimateLibraryComplexity INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.EstimatedLibraryComplexity.txt"
 	i += 1
 }
 out_fp.puts "#\tOUTPUT:"
@@ -508,7 +508,7 @@ out_fp.puts "", "###\td. RNA-seq metrics"
 out_fp.puts "#\tINPUT:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
-	out_fp.puts "#\t\t#{sample_id}/accepted_hits.bam"
+	out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
 }
 out_fp.puts "#\tEXECUTION:"
 samples.each { |sample|
@@ -524,7 +524,7 @@ samples.each { |sample|
 		out_fp.puts "ERROR: Invalid library-type #{libtype}"
 		exit -1
 	end
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/CollectRnaSeqMetrics.jar INPUT=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.pdf REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.interval_list"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar CollectRnaSeqMetrics INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.pdf REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.interval_list"
 	sub_fps[(i % num_jobs)].puts "./plot_RnaSeqMetrics.R #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.class.pdf"
 	i += 1
 }
@@ -593,7 +593,7 @@ if de_pipeline == "tuxedo"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}/accepted_hits.bam"
+		out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
 	}
 	out_fp.puts "#\tREQUIRED DATA FILES:"
 	out_fp.puts "#\t\t#{genes_gtf_file}"
@@ -610,7 +610,7 @@ if de_pipeline == "tuxedo"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-		cmd = "cufflinks --output-dir #{output_cufflinks_dir}/#{sample_id} --num-threads #{num_alignment_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
+		cmd = "cufflinks --output-dir #{output_cufflinks_dir}/#{sample_id} --num-threads #{num_alignment_threads} --GTF #{genes_gtf_file} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --upper-quartile-norm --compatible-hits-norm --quiet --no-update-check #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -657,7 +657,7 @@ if de_pipeline == "tuxedo"
 	out_fp.puts "#\t\t#{output_cuffmerge_dir}/merged.gtf"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{sample_id}/accepted_hits.bam"
+		out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
 	}
 	out_fp.puts "#\tEXECUTION:"
 	sub_fps.clear
@@ -671,7 +671,7 @@ if de_pipeline == "tuxedo"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-		sub_fps[(i % num_jobs)].puts "cuffquant --output-dir #{output_cuffquant_dir}/#{sample_id}.cuffquant_output -p #{num_alignment_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
+		sub_fps[(i % num_jobs)].puts "cuffquant --output-dir #{output_cuffquant_dir}/#{sample_id}.cuffquant_output -p #{num_alignment_threads} --mask-file /Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.gtf --multi-read-correct --library-type #{libtype} --quiet --no-update-check #{output_cuffmerge_dir}/merged.gtf #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam"
 		i += 1
 	}
 	sub_fps.each { |fp|
@@ -802,7 +802,7 @@ elsif de_pipeline == "featureCounts"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
+		out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam"
 	}
 	out_fp.puts "#\tREQUIRED DATA FILES:"
 	out_fp.puts "#\t\t#{genes_gtf_file}"
@@ -828,9 +828,9 @@ elsif de_pipeline == "featureCounts"
 			puts "ERROR: invalid library-type #{libtype}"
 			exit -1
 		end
-		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/accepted_hits.bam -o #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
+		cmd = "samtools sort -n #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
-		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/accepted_hits.namesorted.bam"
+		cmd = "featureCounts -s #{libtype_str} -p -t exon -g gene_id -a #{genes_gtf_file} -o #{output_featureCounts_dir}/#{sample_id}.featureCounts.counts.txt #{output_alignment_dir}/#{sample_id}/#{sample_id}.namesorted.bam"
 		sub_fps[(i % num_jobs)].puts cmd
 		i += 1
 	}
@@ -1025,7 +1025,7 @@ if flag_variants
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
-		out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}/accepted_hits.bam"
+		out_fp.puts "#\t\t#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam"
 	}
 	out_fp.puts "#\tEXECUTION:"
 	out_fp.puts "mkdir -p #{output_variant_dir}"
@@ -1038,14 +1038,14 @@ if flag_variants
 		fp.puts "PICARDPATH=/share/picard"
 		fp.puts "GATKPATH=/share/GATK-3.7"
 		fp.puts ""
-		fp.puts "java -jar $PICARDPATH/picard.jar AddOrReplaceReadGroups I=#{output_alignment_dir}/#{sample_id}/accepted_hits.bam O=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.bam SO=coordinate RGID=#{sample_id} RGLB=#{sample_id} RGPL=ILLUMINA RGPU=#{sample_id} RGSM=#{sample_id}"
-		fp.puts "java -jar $PICARDPATH/picard.jar MarkDuplicates I=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.bam O=#{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.bam CREATE_INDEX=true VALIDATION_STRINGENCY=SILENT M=#{output_variant_dir}/MarkDuplicates.#{sample_id}.metrics"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SplitNCigarReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.bam -o #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -rf ReassignOneMappingQuality -RMQF 255 -RMQT 60 -U ALLOW_N_CIGAR_READS"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -o #{output_variant_dir}/recal_data.#{sample_id}.table"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_variant_dir}/post_recal_data.#{sample_id}.table"
+		fp.puts "java -jar $PICARDPATH/picard.jar AddOrReplaceReadGroups I=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam O=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.bam SO=coordinate RGID=#{sample_id} RGLB=#{sample_id} RGPL=ILLUMINA RGPU=#{sample_id} RGSM=#{sample_id}"
+		fp.puts "java -jar $PICARDPATH/picard.jar MarkDuplicates I=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.bam O=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.bam CREATE_INDEX=true VALIDATION_STRINGENCY=SILENT M=#{output_variant_dir}/MarkDuplicates.#{sample_id}.metrics"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SplitNCigarReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.bam -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -rf ReassignOneMappingQuality -RMQF 255 -RMQT 60 -U ALLOW_N_CIGAR_READS"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -o #{output_variant_dir}/recal_data.#{sample_id}.table"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_variant_dir}/post_recal_data.#{sample_id}.table"
 		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T AnalyzeCovariates -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -L 20 -before #{output_variant_dir}/recal_data.#{sample_id}.table -after #{output_variant_dir}/post_recal_data.#{sample_id}.table -plots #{output_variant_dir}/recalibration_plots.#{sample_id}.pdf"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T PrintReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.rg.dedupped.split.bam -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_alignment_dir}/#{sample_id}/accepted_hits.merged.rg.dedupped.split.recal.bam"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T HaplotypeCaller -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/accepted_hits.merged.rg.dedupped.split.recal.bam -dontUseSoftClippedBases -stand_call_conf 10.0 -o #{output_variant_dir}/#{sample_id}.vcf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T PrintReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.merged.rg.dedupped.split.recal.bam"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T HaplotypeCaller -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.merged.rg.dedupped.split.recal.bam -dontUseSoftClippedBases -stand_call_conf 10.0 -o #{output_variant_dir}/#{sample_id}.vcf"
 		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T VariantFiltration -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.vcf -window 35 -cluster 3 -filterName FS -filter \"FS > 30.0\" -filterName QD -filter \"QD < 2.0\" -o #{output_variant_dir}/#{sample_id}.filtered.vcf"
 		
 		fp.close
