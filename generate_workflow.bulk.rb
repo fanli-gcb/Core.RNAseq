@@ -421,7 +421,7 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
@@ -441,13 +441,11 @@ samples.each { |sample|
 	out_fp.puts "[ -f \"#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam\" ] || (echo \"ERROR: #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam not found!\" && exit)"
 }
 
-out_fp.puts "", "###\tb. Library-level QC metrics"
+out_fp.puts "", "###\tb. Insert size and library complexity metrics"
 out_fp.puts "#\tINPUT:"
 samples.each { |sample|
-  out = sample["fastq"].split(",")
-  out.each { |fastq|
-    out_fp.puts "#\t\t#{fastq}"
-  }
+	sample_id = sample["sample_id"]
+	out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
 }
 out_fp.puts "#\tEXECUTION:"
 sub_fps.clear
@@ -458,38 +456,6 @@ out_fp.puts "mkdir -p #{output_QC_dir}"
 end
 out_fp.puts "wait"
 i = 0
-samples.each { |sample|
-	fastqs = sample["fastq"].split(",").collect { |x| "#{fastq_dir}/#{x}" }
-	sample_id = sample["sample_id"]
-	out = "#{output_QC_dir}/#{sample_id}.unaligned.bam"
-	if (fastqs.length==1)
-		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar FastqToSam FASTQ=#{fastqs[0]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
-	else
-		cmd = "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar FastqToSam FASTQ=#{fastqs[0]} FASTQ2=#{fastqs[1]} OUTPUT=#{out} SAMPLE_NAME=\"#{sample_id}\""
-	end
-	sub_fps[(i % num_jobs)].puts(cmd)
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar QualityScoreDistribution INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.QualityScoreDistribution.pdf"
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar MeanQualityByCycle INPUT=#{out} OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.MeanQualityByCycle.pdf"
-	i += 1
-}
-
-out_fp.puts "#\tOUTPUT:"
-samples.each { |sample|
-	sample_id = sample["sample_id"]
-	out_fp.puts "#\t\t#{sample_id}.unaligned.bam"
-	out_fp.puts "#\t\t#{sample_id}.QualityScoreDistribution.txt"
-	out_fp.puts "#\t\t#{sample_id}.QualityScoreDistribution.pdf"
-	out_fp.puts "#\t\t#{sample_id}.MeanQualityByCycle.txt"
-	out_fp.puts "#\t\t#{sample_id}.MeanQualityByCycle.pdf"
-}
-
-out_fp.puts "", "###\tc. Insert size metrics"
-out_fp.puts "#\tINPUT:"
-samples.each { |sample|
-	sample_id = sample["sample_id"]
-	out_fp.puts "#\t\t#{sample_id}/#{sample_id}.bam"
-}
-out_fp.puts "#\tEXECUTION:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
 	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar CollectInsertSizeMetrics INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.txt HISTOGRAM_FILE=#{output_QC_dir}/#{sample_id}.InsertSizeMetrics.pdf"
@@ -504,7 +470,7 @@ samples.each { |sample|
 	out_fp.puts "#\t\t#{sample_id}.EstimatedLibraryComplexity.txt"
 }
 	
-out_fp.puts "", "###\td. RNA-seq metrics"
+out_fp.puts "", "###\tc. RNA-seq metrics"
 out_fp.puts "#\tINPUT:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
@@ -524,7 +490,7 @@ samples.each { |sample|
 		out_fp.puts "ERROR: Invalid library-type #{libtype}"
 		exit -1
 	end
-	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar CollectRnaSeqMetrics INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt CHART_OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.pdf REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rmsk_rRNA.interval_list"
+	sub_fps[(i % num_jobs)].puts "java -Xmx8g -Djava.io.tmpdir=/mnt/tmp -jar \$PICARDPATH/picard.jar CollectRnaSeqMetrics INPUT=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam OUTPUT=#{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt REF_FLAT=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/refFlat.txt STRAND_SPECIFICITY=#{strand_specificity} RIBOSOMAL_INTERVALS=/Lab_Share/iGenomes/#{genome}/Annotation/Genes/rRNA.interval_list"
 	sub_fps[(i % num_jobs)].puts "./plot_RnaSeqMetrics.R #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.txt #{output_QC_dir}/#{sample_id}.RnaSeqMetrics.class.pdf"
 	i += 1
 }
@@ -535,12 +501,11 @@ out_fp.puts "#\tOUTPUT:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
 	out_fp.puts "#\t\t#{sample_id}.RnaSeqMetrics.txt"
-	out_fp.puts "#\t\t#{sample_id}.RnaSeqMetrics.pdf"
 	out_fp.puts "#\t\t#{sample_id}.RnaSeqMetrics.class.pdf"
 }
 
 if flag_kallisto
-	out_fp.puts "", "###\te. Run kallisto"
+	out_fp.puts "", "###\td. Run kallisto"
 	out_fp.puts "#\tINPUT:"
 	samples.each { |sample|
 		out = sample["fastq"].split(",")
