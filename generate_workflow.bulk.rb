@@ -9,7 +9,7 @@ flag_kallisto = false
 flag_comparison = false
 flag_qualitytrim = true # changed to true by default
 flag_variants = false
-aligner = "hisat2" # use HISAT2 aligner by default, tophat2 as an option
+aligner = "hisat2" # use HISAT2 aligner by default, tophat2/bowtie2 as an option
 de_pipeline = "kallisto" # "tuxedo" for Cufflinks/Cuffdiff/cummeRbund, "featureCounts" for featureCounts/DESeq2, "kallisto" for kallisto/DESeq2
 read_mismatches = 2
 read_gap_length = 2
@@ -18,6 +18,7 @@ max_multihits = 10
 num_jobs = 1 # used to split tophat/QC/cuffetc steps into multiple batches
 num_alignment_threads = 6	# used for Tuxedo suite multithreading
 preprocess_fastq = false
+trim_polyA = false
 
 full_command = ARGV.join(" ")
 
@@ -37,6 +38,9 @@ if (ARGV.size >= 6)
 		elsif arg == "--output-hisat2-dir"
 			output_hisat2_dir = ARGV.shift
 			output_hisat2_dir = output_hisat2_dir.gsub(/\/$/, "")
+		elsif arg == "--output-bowtie2-dir"
+			output_bowtie2_dir = ARGV.shift
+			output_bowtie2_dir = output_bowtie2_dir.gsub(/\/$/, "")
 		elsif arg == "--output-QC-dir"
 			output_QC_dir = ARGV.shift
 			output_QC_dir = output_QC_dir.gsub(/\/$/, "")
@@ -120,6 +124,8 @@ if (ARGV.size >= 6)
 			aligner = ARGV.shift
 		elsif arg == "--do-variant-calling"
 			flag_variants = true
+		elsif arg == "--trim-polyA"
+			trim_polyA = true
 		else
 			puts "ERROR: Unrecognized option #{arg}"
 			exit -1
@@ -161,6 +167,9 @@ if output_tophat_dir.nil?
 end
 if output_hisat2_dir.nil?
 	output_hisat2_dir = "#{output_dir}/hisat2"
+end
+if output_bowtie2_dir.nil?
+	output_bowtie2_dir = "#{output_dir}/bowtie2"
 end
 if output_QC_dir.nil?
 	output_QC_dir = "#{output_dir}/QC"
@@ -214,8 +223,8 @@ if genome.nil?
 	puts "ERROR: genome must be specified"
 	exit -1
 else
-	if !(genome == "hg38" || genome == "GRCh38" || genome == "mm10")
-		puts "ERROR: genome must be 'hg38', 'GRCh38', or 'mm10'"
+	if !(genome == "hg38" || genome == "GRCh38" || genome == "mm10" || genome == "GRCm38")
+		puts "ERROR: genome must be 'hg38', 'GRCh38', 'mm10', or 'GRCm38'"
 		exit -1
 	end
 end
@@ -230,8 +239,10 @@ if (aligner == "tophat")
 	output_alignment_dir = output_tophat_dir
 elsif (aligner == "hisat2") 
 	output_alignment_dir = output_hisat2_dir
+elsif (aligner == "bowtie2")
+	output_alignment_dir = output_bowtie2_dir
 else
-	puts "ERROR: aligner must be 'hisat2' or 'tophat'"
+	puts "ERROR: aligner must be 'hisat2', 'tophat', or 'bowtie2'"
 	exit -1
 end
 
@@ -347,13 +358,14 @@ if flag_qualitytrim
 		paired_str = sample["paired"] == "yes" ? "--paired" : ""
 		out_files = sample["fastq"].gsub(".fastq.gz", "").gsub(".fastq", "") # only the basename
 		out_str = out_files.split(",").collect { |x| "#{fastq_dir}/#{x}.trimmed.fastq.gz #{fastq_dir}/#{x}.unpaired.fastq.gz" }.join(" ")
+		adapter_flag = trim_polyA ? "--adapter AAAAAA" : ""
 #		cmd = "java -jar /mnt/Trimmomatic-0.33/trimmomatic-0.33.jar PE -threads #{num_alignment_threads} -phred33 #{fastq_str} #{out_str} LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36 2>> #{fastq_dir}/trim.log"
-		cmd = "trim_galore --fastqc_args \"--outdir=#{fastq_dir}\" --stringency 1 --output_dir #{fastq_dir} #{paired_str} #{fastq_str}"
+		cmd = "trim_galore --fastqc_args \"--outdir=#{fastq_dir}\" #{adapter_flag} --stringency 1 --output_dir #{fastq_dir} #{paired_str} #{fastq_str}"
 		sub_fps[(i % num_jobs)].puts(cmd)
 		i += 1
 		j = 1
 		sample["fastq"].split(",").each { |fastq_str|
-			sample_name = fastq_str.gsub(".fastq.gz", "").gsub(".fastq","")
+			sample_name = fastq_str.gsub(".fastq.gz", "").gsub(".fastq","").gsub(".fq.gz", "").gsub(".fq", "")
 			if (File.extname(fastq_str)==".gz")
 				extstr = "fq.gz"
 				extstr2 = "fastq.gz"
@@ -376,6 +388,7 @@ if flag_qualitytrim
 			j += 1
 		}
 		sample["fastq"] = sample["fastq"].gsub(".fastq", ".trimmed.fastq")
+		sample["fastq"] = sample["fastq"].gsub(".fq", ".trimmed.fastq")
 	}
 	sub_fps.each { |fp|
 		fp.close
@@ -421,7 +434,19 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --rna-strandness #{libtype} --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
+	elsif aligner == "bowtie2"
+		sub_fps[(i % num_jobs)].puts("mkdir -p #{output_alignment_dir}/#{sample_id}")
+		arr = sample["fastq"].split(",")
+		if arr.length == 1
+			fastq_str = "-U #{fastq_dir}/#{arr[0]}"
+		elsif arr.length == 2
+			fastq_str = "-1 #{fastq_dir}/#{arr[0]} -2 #{fastq_dir}/#{arr[1]}"
+		else
+			puts "ERROR: invalid fastq string!"
+			exit -1
+		end
+		cmd = "bowtie2 --threads #{num_alignment_threads} --no-unal -x /Lab_Share/iGenomes/#{genome}/Sequence/Bowtie2Index/genome #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
 	end
 	sub_fps[(i % num_jobs)].puts(cmd)
 	i += 1
@@ -1006,13 +1031,15 @@ if flag_variants
 		fp.puts "java -jar $PICARDPATH/picard.jar AddOrReplaceReadGroups I=#{output_alignment_dir}/#{sample_id}/#{sample_id}.bam O=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.bam SO=coordinate RGID=#{sample_id} RGLB=#{sample_id} RGPL=ILLUMINA RGPU=#{sample_id} RGSM=#{sample_id}"
 		fp.puts "java -jar $PICARDPATH/picard.jar MarkDuplicates I=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.bam O=#{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.bam CREATE_INDEX=true VALIDATION_STRINGENCY=SILENT M=#{output_variant_dir}/MarkDuplicates.#{sample_id}.metrics"
 		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SplitNCigarReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.bam -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -rf ReassignOneMappingQuality -RMQF 255 -RMQT 60 -U ALLOW_N_CIGAR_READS"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -o #{output_variant_dir}/recal_data.#{sample_id}.table"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -L 20 -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_variant_dir}/post_recal_data.#{sample_id}.table"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T AnalyzeCovariates -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -L 20 -before #{output_variant_dir}/recal_data.#{sample_id}.table -after #{output_variant_dir}/post_recal_data.#{sample_id}.table -plots #{output_variant_dir}/recalibration_plots.#{sample_id}.pdf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -o #{output_variant_dir}/recal_data.#{sample_id}.table"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T BaseRecalibrator -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -knownSites $GATKPATH/resources/dbsnp.#{genome}.vcf -knownSites $GATKPATH/resources/gold_indels.#{genome}.vcf -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_variant_dir}/post_recal_data.#{sample_id}.table"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T AnalyzeCovariates -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -before #{output_variant_dir}/recal_data.#{sample_id}.table -after #{output_variant_dir}/post_recal_data.#{sample_id}.table -plots #{output_variant_dir}/recalibration_plots.#{sample_id}.pdf"
 		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T PrintReads -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.rg.dedupped.split.bam -BQSR #{output_variant_dir}/recal_data.#{sample_id}.table -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.merged.rg.dedupped.split.recal.bam"
 		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T HaplotypeCaller -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -I #{output_alignment_dir}/#{sample_id}/#{sample_id}.merged.rg.dedupped.split.recal.bam -dontUseSoftClippedBases -stand_call_conf 10.0 -o #{output_variant_dir}/#{sample_id}.vcf"
-		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T VariantFiltration -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.vcf -window 35 -cluster 3 -filterName FS -filter \"FS > 30.0\" -filterName QD -filter \"QD < 2.0\" -o #{output_variant_dir}/#{sample_id}.filtered.vcf"
-		
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SelectVariants -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.vcf -selectType SNP -o #{output_variant_dir}/#{sample_id}.SNPs.vcf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T SelectVariants -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.vcf -selectType INDEL -o #{output_variant_dir}/#{sample_id}.indels.vcf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T VariantFiltration -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.SNPs.vcf -filterName \"SNP_filter\" -filter \"QD < 2.0 || FS > 60.0 || SOR > 4.0 || MQ < 40.0 || MQRankSum < -12.5 || ReadPosRankSum < -8.0\" -o #{output_variant_dir}/#{sample_id}.filtered_SNPs.vcf"
+		fp.puts "java -jar $GATKPATH/GenomeAnalysisTK.jar -T VariantFiltration -R /Lab_Share/iGenomes/#{genome}/Sequence/WholeGenomeFasta/genome.fa -V #{output_variant_dir}/#{sample_id}.indels.vcf -filterName \"INDEL_filter\" -filter \"QD < 2.0 || FS > 200.0 || ReadPosRankSum < -20.0\" -o #{output_variant_dir}/#{sample_id}.filtered_indels.vcf"
 		fp.close
 		# issue command to run sample-specific shell script
 		master_fp.puts("bash #{output_code_dir}/workflow.#{project}.GATK.#{sample_id}.sh")
