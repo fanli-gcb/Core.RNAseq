@@ -434,7 +434,8 @@ samples.each { |sample|
 			puts "ERROR: invalid fastq string!"
 			exit -1
 		end
-		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary --rna-strandness #{libtype} --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
+		strandstr = (libtype == "unstranded") ? "" : "--rna-strandness #{libtype}"
+		cmd = "hisat2 --threads #{num_alignment_threads} --no-unal --new-summary #{strandstr} --summary-file #{output_alignment_dir}/#{sample_id}/#{sample_id}.txt -x /Lab_Share/iGenomes/#{genome}/Sequence/HISAT2Index/genome_tran #{fastq_str} | samtools sort - | samtools view -bS -o #{output_alignment_dir}/#{sample_id}/#{sample_id}.bam -"
 	elsif aligner == "bowtie2"
 		sub_fps[(i % num_jobs)].puts("mkdir -p #{output_alignment_dir}/#{sample_id}")
 		arr = sample["fastq"].split(",")
@@ -505,11 +506,11 @@ out_fp.puts "#\tEXECUTION:"
 samples.each { |sample|
 	sample_id = sample["sample_id"]
 	libtype = sample["library-type"]
-	if libtype == "fr-unstranded"
+	if libtype == "fr-unstranded" or libtype == "unstranded"
 		strand_specificity="NONE"
-	elsif libtype == "fr-firststrand"
+	elsif libtype == "fr-firststrand" or libtype == "RF"
 		strand_specificity="FIRST_READ_TRANSCRIPTION_STRAND"
-	elsif libtype == "fr-secondstrand"
+	elsif libtype == "fr-secondstrand" or libtype == "FD"
 		strand_specificity="SECOND_READ_TRANSCRIPTION_STRAND"
 	else
 		out_fp.puts "ERROR: Invalid library-type #{libtype}"
@@ -808,11 +809,11 @@ elsif de_pipeline == "featureCounts"
 	samples.each { |sample|
 		sample_id = sample["sample_id"]
 		libtype = sample["library-type"]
-		if libtype == "fr-unstranded"
+		if libtype == "fr-unstranded" or libtype == "unstranded"
 			libtype_str = "0"
-		elsif libtype == "fr-firststrand"
+		elsif libtype == "fr-firststrand"  or libtype == "RF"
 			libtype_str = "2"
-		elsif libtype == "fr-secondstrand"
+		elsif libtype == "fr-secondstrand"  or libtype == "FR"
 			libtype_str = "1"
 		else
 			puts "ERROR: invalid library-type #{libtype}"
