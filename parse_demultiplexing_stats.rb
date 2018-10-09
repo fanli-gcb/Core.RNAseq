@@ -11,6 +11,8 @@ doc = Nokogiri::XML(f)
 
 puts "SampleID\tBarcode\tLane\tCount"
 
+counts = Hash.new(0)
+
 root = doc.xpath('//Project')[0]
 root.xpath('Sample').each do |thing|
 	sample = thing.attr("name")
@@ -19,8 +21,14 @@ root.xpath('Sample').each do |thing|
 	barcode.xpath('Lane').each do |lane|
 		lane_number = lane.attr("number")
 		count = lane.at_xpath('BarcodeCount').content
-		puts "#{sample}\t#{barcode_str}\t#{lane_number}\t#{count}"
+		counts[sample] += count.to_i
+#		puts "#{sample}\t#{barcode_str}\t#{lane_number}\t#{count}"
 	end
 end
 
 f.close
+
+counts.each_key { |sample|
+	puts "#{sample}\t#{counts[sample]}"
+}
+

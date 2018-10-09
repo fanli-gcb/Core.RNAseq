@@ -510,7 +510,7 @@ samples.each { |sample|
 		strand_specificity="NONE"
 	elsif libtype == "fr-firststrand" or libtype == "RF"
 		strand_specificity="FIRST_READ_TRANSCRIPTION_STRAND"
-	elsif libtype == "fr-secondstrand" or libtype == "FD"
+	elsif libtype == "fr-secondstrand" or libtype == "FR"
 		strand_specificity="SECOND_READ_TRANSCRIPTION_STRAND"
 	else
 		out_fp.puts "ERROR: Invalid library-type #{libtype}"
